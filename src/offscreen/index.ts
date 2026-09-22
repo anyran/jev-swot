@@ -3,6 +3,7 @@ import type { WorkerRequest } from "../shared/types";
 
 const engine = new PaddleOcr();
 const ocrControllers = new Map<string, AbortController>();
+let ocrQueue = Promise.resolve();
 chrome.runtime.onMessage.addListener((request: WorkerRequest, _sender, sendResponse) => {
   if (request.type === "CANCEL_OCR") {
     ocrControllers.get(request.requestId)?.abort();
@@ -16,7 +17,10 @@ chrome.runtime.onMessage.addListener((request: WorkerRequest, _sender, sendRespo
   if (request.type !== "OCR") return false;
   const controller = request.requestId ? new AbortController() : undefined;
   if (request.requestId && controller) ocrControllers.set(request.requestId, controller);
-  void engine.recognize(request.imageDataUrl, request.rect, request.devicePixelRatio, request.useWebGpu, controller?.signal)
+  const run = () => engine.recognize(request.imageDataUrl, request.rect, request.devicePixelRatio, request.useWebGpu, controller?.signal);
+  const queued = ocrQueue.then(run, run);
+  ocrQueue = queued.then(() => undefined, () => undefined);
+  void queued
     .then((result) => sendResponse({ ok: true, ...result }))
     .catch((error: unknown) => sendResponse({ ok: false, code: controller?.signal.aborted ? "OCR_CANCELLED" : "OCR_FAILED", message: error instanceof Error ? error.message : "OCR 失败", recoverable: true }))
     .finally(() => { if (request.requestId && ocrControllers.get(request.requestId) === controller) ocrControllers.delete(request.requestId); });
