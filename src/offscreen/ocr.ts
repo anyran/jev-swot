@@ -62,9 +62,12 @@ export class PaddleOcr {
     throwIfAborted(signal);
     const bitmap = await createImageBitmap(await (await fetch(dataUrl)).blob());
     let crop: ImageData;
+    let cropScale = 1;
     try {
       throwIfAborted(signal);
-      crop = cropBitmap(bitmap, rect, dpr);
+      const cropped = cropBitmap(bitmap, rect, dpr);
+      crop = cropped.image;
+      cropScale = cropped.scale;
     } finally {
       bitmap.close();
     }
@@ -82,6 +85,10 @@ export class PaddleOcr {
     }
     const rotation = best.rotation;
     if (rotation) best = { ...best, boxes: best.boxes.map((box) => unrotateBox(box, crop.width, crop.height, rotation)), rotation: 0 };
+    // The OCR crop is intentionally enlarged for small text.  Preview and
+    // option-highlight coordinates are expressed in the already-cropped image
+    // space, so map recognition boxes back before returning them.
+    if (cropScale !== 1) best = { ...best, boxes: best.boxes.map((box) => mapBoxToSource(box, cropScale)) };
     return best;
   }
   private async recognizeVariant(crop: ImageData, rotation: 0 | 90 | -90 = 0, signal?: AbortSignal): Promise<OcrResult> {
@@ -151,7 +158,7 @@ function rotateImage(image: ImageData, degrees: 90 | -90): ImageData {
   const source=new OffscreenCanvas(image.width,image.height),target=new OffscreenCanvas(image.height,image.width);source.getContext("2d")!.putImageData(image,0,0);const ctx=target.getContext("2d")!;ctx.translate(target.width/2,target.height/2);ctx.rotate(degrees*Math.PI/180);ctx.drawImage(source,-image.width/2,-image.height/2);return ctx.getImageData(0,0,target.width,target.height);
 }
 
-function cropBitmap(bitmap: ImageBitmap, rect: DOMRectLike, dpr: number): ImageData {
+function cropBitmap(bitmap: ImageBitmap, rect: DOMRectLike, dpr: number): { image: ImageData; scale: number } {
   const x = Math.max(0, Math.min(bitmap.width - 1, Math.round(rect.x * dpr)));
   const y = Math.max(0, Math.min(bitmap.height - 1, Math.round(rect.y * dpr)));
   const right = Math.max(x + 1, Math.min(bitmap.width, Math.round((rect.x + rect.width) * dpr)));
@@ -161,7 +168,7 @@ function cropBitmap(bitmap: ImageBitmap, rect: DOMRectLike, dpr: number): ImageD
   const canvas = new OffscreenCanvas(Math.max(1, Math.round(w * scale)), Math.max(1, Math.round(h * scale)));
   const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
   ctx.drawImage(bitmap, x, y, w, h, 0, 0, canvas.width, canvas.height);
-  return ctx.getImageData(0, 0, canvas.width, canvas.height);
+  return { image: ctx.getImageData(0, 0, canvas.width, canvas.height), scale };
 }
 function resizeForDetection(image: ImageData): ImageData {
   const scale = Math.min(1, 960 / Math.max(image.width, image.height));
@@ -278,6 +285,12 @@ export function unrotateBox(box: Box & { text: string }, originalWidth: number, 
   const xs = points.map((point) => point.x), ys = points.map((point) => point.y), x = Math.max(0, Math.min(...xs)), y = Math.max(0, Math.min(...ys));
   const right = Math.min(originalWidth, Math.max(...xs)), bottom = Math.min(originalHeight, Math.max(...ys));
   return { ...box, x, y, width: Math.max(1, right - x), height: Math.max(1, bottom - y), quad: box.quad ? points as [Point, Point, Point, Point] : undefined };
+}
+export function mapBoxToSource<T extends Box & { text: string }>(box: T, scale: number): T {
+  if (!Number.isFinite(scale) || scale <= 0 || scale === 1) return box;
+  const map = (point: Point): Point => ({ x: point.x / scale, y: point.y / scale });
+  const points = box.quad?.map(map) as [Point, Point, Point, Point] | undefined;
+  return { ...box, x: box.x / scale, y: box.y / scale, width: box.width / scale, height: box.height / scale, quad: points };
 }
 function sampleBilinear(image:ImageData,x:number,y:number,target:Uint8ClampedArray,offset:number){const x0=Math.max(0,Math.min(image.width-1,Math.floor(x))),y0=Math.max(0,Math.min(image.height-1,Math.floor(y))),x1=Math.min(image.width-1,x0+1),y1=Math.min(image.height-1,y0+1),fx=Math.max(0,Math.min(1,x-x0)),fy=Math.max(0,Math.min(1,y-y0));for(let c=0;c<4;c++){const top=image.data[(y0*image.width+x0)*4+c]*(1-fx)+image.data[(y0*image.width+x1)*4+c]*fx,bottom=image.data[(y1*image.width+x0)*4+c]*(1-fx)+image.data[(y1*image.width+x1)*4+c]*fx;target[offset+c]=top*(1-fy)+bottom*fy;}}
 export function decodeCtc(tensor: ort.Tensor, dict: string[], batchIndex = 0): { text: string; confidence: number; lowConfidenceRatio: number } {

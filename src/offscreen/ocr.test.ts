@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as ort from "onnxruntime-web/webgpu";
-import { decodeCtc, detectFormulaLayout, PaddleOcr, projectQuadPoint, sortTextBoxes, unrotateBox } from "./ocr";
+import { decodeCtc, detectFormulaLayout, mapBoxToSource, PaddleOcr, projectQuadPoint, sortTextBoxes, unrotateBox } from "./ocr";
 
 describe("OCR perspective mapping", () => {
   it("maps destination corners onto a skewed source quadrilateral", () => {
@@ -40,6 +40,12 @@ describe("OCR rotation coordinates", () => {
     expect(box.y).toBe(150);
     expect(box.width).toBe(40);
     expect(box.height).toBe(30);
+  });
+
+  it("maps boxes back after small-crop enlargement", () => {
+    const box = mapBoxToSource({ x: 20, y: 10, width: 30, height: 40, confidence: 1, text: "x", quad: [{ x: 20, y: 10 }, { x: 50, y: 10 }, { x: 50, y: 50 }, { x: 20, y: 50 }] }, 2);
+    expect(box).toMatchObject({ x: 10, y: 5, width: 15, height: 20 });
+    expect(box.quad?.[2]).toEqual({ x: 25, y: 25 });
   });
 });
 
