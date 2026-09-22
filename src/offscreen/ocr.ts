@@ -12,7 +12,9 @@ export class PaddleOcr {
   private dictionary?: string[];
   private backend: "wasm" | "webgpu" = "wasm";
   async initialize(useWebGpu = false): Promise<void> {
-    if (this.detector) return;
+    const desiredBackend = useWebGpu && "gpu" in navigator ? "webgpu" : "wasm";
+    if (this.detector && this.backend === desiredBackend) return;
+    if (this.detector) await this.releaseSessions();
     const [dictResponse] = await Promise.all([fetch(chrome.runtime.getURL("models/ppocrv5-dict.txt"))]);
     if (!dictResponse.ok) throw new Error("PP-OCRv5 模型尚未安装；请参照 models/README.md 放置并校验模型资产。");
     this.dictionary = ["blank", ...(await dictResponse.text()).split(/\r?\n/).filter(Boolean), " "];

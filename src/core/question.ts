@@ -2,7 +2,7 @@ import type { ExtractedQuestion, QuestionOption, RecognitionWarning } from "../s
 
 const OPTION_RE = /^\s*(?:([A-Ha-h])|([1-9]\d{0,2})|([①②③④⑤⑥⑦⑧⑨]))[.、)）:]\s*(.+)$/;
 const FORMULA_RE = /[∑√∫≈≠≤≥^]|\b(?:sin|cos|tan|log)\b|\$[^$]+\$/i;
-const DIAGRAM_RE = /(?:如图|下图|图中|曲线|阴影|图表|统计图|几何|化学结构|结构式|坐标系|示意图|diagram|graph|figure|chart)/i;
+const DIAGRAM_RE = /(?:如图|下图|图中|曲线|折线|柱状|散点|阴影|面积|图表|统计图|几何|化学(?:结构|式)|结构式|分子|坐标(?:系|轴)?|示意图|diagram|graph|figure|chart|plot|axis|geometry|chemical\s+structure|molecule)/i;
 const MULTIPLE_RE = /(?:多选|可多选|选择所有|所有正确|select all|multiple choice)/i;
 const SINGLE_RE = /(?:单选|只能选择一项|判断题|single choice|true or false)/i;
 
@@ -44,6 +44,16 @@ export function validateQuestion(question: ExtractedQuestion): string[] {
   if (question.options.some((x) => !x.text.trim())) errors.push("选项内容不能为空");
   if (new Set(question.options.map((x) => x.text.trim().toLocaleLowerCase())).size !== question.options.length) errors.push("选项内容重复");
   return errors;
+}
+
+/**
+ * Returns true when the text and option structure are sufficient to avoid a
+ * screenshot/OCR pass.  The question type is deliberately not checked here:
+ * a DOM-only question can be complete but still need the user to choose
+ * single versus multiple choice in the correction editor.
+ */
+export function hasQuestionStructure(question: ExtractedQuestion): boolean {
+  return validateQuestion(question).every((error) => error === "请确认题目是单选还是多选");
 }
 
 export function hasQuestionTextConflict(reference: ExtractedQuestion, candidate: ExtractedQuestion): boolean {

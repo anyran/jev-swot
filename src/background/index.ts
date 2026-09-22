@@ -1,6 +1,6 @@
 import { askJev } from "../core/typesafe";
 import { LlmError, explainAnswer, recognizeWithVision, streamExplanation, structureOcrText } from "../core/llm";
-import { hasQuestionTextConflict, parseQuestionText, stableOptionId, validateQuestion } from "../core/question";
+import { hasQuestionStructure, hasQuestionTextConflict, parseQuestionText, stableOptionId, validateQuestion } from "../core/question";
 import { getSecrets, getSettings, setSecrets } from "../shared/storage";
 import type { ExtractedQuestion, RecognitionPreview, WorkerRequest, WorkerResponse } from "../shared/types";
 
@@ -84,7 +84,7 @@ async function handle(request: Exclude<WorkerRequest, { type: "OCR" | "CROP_IMAG
   let question = request.question;
   let preview: RecognitionPreview | undefined;
   try {
-    if (validateQuestion(question).length || question.warnings.includes("VISION_MODEL_REQUIRED")) {
+    if (!hasQuestionStructure(question) || question.warnings.includes("INCOMPLETE_OPTIONS") || question.warnings.includes("VISION_MODEL_REQUIRED")) {
       if (!request.captureAuthorized) return { ok: false, code: "CAPTURE_REQUIRES_SHORTCUT", message: "这道题需要截图识别。请使用扩展框选快捷键重新选择题目，以授予当前页面的临时截图权限。", recoverable: true };
       const capabilities = currentCapabilities(settings.llm, secrets);
       const canUseVision = !!secrets.llmApiKey && settings.llm.vision !== "unsupported" && (settings.llm.vision === "supported" || capabilities.visionDetected !== "unsupported");
@@ -92,7 +92,9 @@ async function handle(request: Exclude<WorkerRequest, { type: "OCR" | "CROP_IMAG
         return { ok: false, code: "VISION_CONSENT_REQUIRED", message: "DOM 无法完整提取这道题。是否允许将当前题目选区截图发送给你配置的视觉模型？", recoverable: true };
       }
       sendProgress(sender, request.requestId, "capture", "正在准备题目截图…");
-      const screenshot = request.screenshot ?? await capture(sender.tab?.windowId);
+      let screenshot: string;
+      try { screenshot = request.screenshot ?? await capture(sender.tab?.windowId); }
+      catch (error) { throw new CaptureError("无法从当前页面读取截图。请使用 Ctrl/Command + Shift + Y 框选题目后重试。", error); }
       const recognized = await recognizeFallback(question, screenshot, request.devicePixelRatio ?? 1, settings, secrets, request.requestId, controller.signal, request.visionConsent !== "deny", (stage, message) => sendProgress(sender, request.requestId, stage, message));
       question = recognized.question; preview = recognized.preview;
     }
@@ -113,7 +115,7 @@ async function handle(request: Exclude<WorkerRequest, { type: "OCR" | "CROP_IMAG
   } catch (error) {
     return {
       ok: false,
-      code: controller.signal.aborted ? "CANCELLED" : error instanceof LlmError ? "MODEL_REQUEST_FAILED" : "ANALYSIS_FAILED",
+      code: controller.signal.aborted ? "CANCELLED" : error instanceof CaptureError ? "CAPTURE_FAILED" : error instanceof LlmError ? "MODEL_REQUEST_FAILED" : "ANALYSIS_FAILED",
       message: controller.signal.aborted ? "已取消当前识别。" : messageOf(error),
       recoverable: true,
       question,
@@ -147,7 +149,7 @@ async function recognizeFallback(base: ExtractedQuestion, screenshot: string, de
     } catch (error) {
       if (signal.aborted) throw error;
       if ((error as Error & { unsupportedVision?: boolean }).unsupportedVision) await cacheCapabilities(settings.llm, secrets, "unsupported");
-      else if (error instanceof LlmError) visionFallbackWarning = "VISION_SERVICE_UNAVAILABLE";
+      else visionFallbackWarning = "VISION_SERVICE_UNAVAILABLE";
     }
   }
   progress("ocr-loading", "正在加载本地 PP-OCRv5 模型…");
@@ -227,6 +229,9 @@ async function ensureOffscreen(): Promise<void> {
 let offscreenCreation: Promise<void> | undefined;
 function failure(error: unknown): WorkerResponse { return { ok: false, code: "UNEXPECTED", message: error instanceof Error ? error.message : "发生未知错误", recoverable: true }; }
 function messageOf(error: unknown): string { return (error instanceof Error ? error.message : "未知错误").replace(/[\r\n]+/g, " ").slice(0, 180); }
+class CaptureError extends Error {
+  constructor(message: string, cause: unknown) { super(`${message}${cause instanceof Error && cause.message ? `（${messageOf(cause)}）` : ""}`); this.name = "CaptureError"; }
+}
 function sendProgress(sender: chrome.runtime.MessageSender, requestId: string, stage: "capture" | "vision" | "ocr-loading" | "ocr-running" | "jev", message: string): void {
   if (sender.tab?.id == null) return;
   void chrome.tabs.sendMessage(sender.tab.id, { type: "ANALYZE_PROGRESS", requestId, stage, message }).catch(() => undefined);

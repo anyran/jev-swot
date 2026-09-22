@@ -13,8 +13,23 @@ const DEFAULT_CONTENT_SETTINGS: PersistentSettings = {
 };
 async function getSettings(): Promise<PersistentSettings> {
   const stored = await chrome.storage.local.get("settings");
-  const settings = (stored.settings ?? {}) as Partial<PersistentSettings>;
-  return { ...DEFAULT_CONTENT_SETTINGS, ...settings, llm: { ...DEFAULT_CONTENT_SETTINGS.llm, ...(settings.llm ?? {}) } };
+  const raw = stored.settings && typeof stored.settings === "object" ? stored.settings as Record<string, unknown> : {};
+  const llm = raw.llm && typeof raw.llm === "object" ? raw.llm as Record<string, unknown> : {};
+  const capability = (value: unknown, fallback: "auto" | "supported" | "unsupported") => value === "auto" || value === "supported" || value === "unsupported" ? value : fallback;
+  const disabledHosts = Array.isArray(raw.disabledHosts) ? raw.disabledHosts.map((host) => typeof host === "string" ? host.trim().toLowerCase().replace(/^\.+|\.+$/g, "") : "").filter(Boolean) : [];
+  const threshold = Number(raw.ocrThreshold);
+  return {
+    llm: {
+      baseUrl: typeof llm.baseUrl === "string" && llm.baseUrl.trim() ? llm.baseUrl.trim() : DEFAULT_CONTENT_SETTINGS.llm.baseUrl,
+      model: typeof llm.model === "string" && llm.model.trim() ? llm.model.trim() : DEFAULT_CONTENT_SETTINGS.llm.model,
+      vision: capability(llm.vision, "auto"),
+      structuredOutput: capability(llm.structuredOutput, "auto")
+    },
+    ocrThreshold: Number.isFinite(threshold) ? Math.min(0.95, Math.max(0.5, threshold)) : DEFAULT_CONTENT_SETTINGS.ocrThreshold,
+    useWebGpu: raw.useWebGpu === true,
+    confirmVisionUpload: raw.confirmVisionUpload !== false,
+    disabledHosts
+  };
 }
 
 let selecting = false;

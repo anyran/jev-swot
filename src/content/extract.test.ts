@@ -59,4 +59,16 @@ describe("DOM extraction", () => {
     expect(question.warnings).toContain("POSSIBLE_FORMULA");
     expect(question.warnings).not.toContain("VISION_MODEL_REQUIRED");
   });
+  it("excludes common advertisement containers from DOM text", () => {
+    const element = document.querySelectorAll(".question")[0];
+    element.insertAdjacentHTML("afterbegin", '<div class="advertisement">hidden sponsored answer</div><div data-ad="true">another ad</div>');
+    expect(extractFromElement(element).stem).not.toContain("sponsored");
+    expect(extractFromElement(element).stem).not.toContain("another ad");
+  });
+  it("marks chemistry and chart cues as visual dependencies when an image is present", () => {
+    const element = document.querySelectorAll(".question")[0];
+    element.querySelector("h2")!.textContent = "化学结构式对应的物质是？";
+    element.insertAdjacentHTML("afterbegin", '<img alt="结构图" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==">');
+    expect(extractFromElement(element).warnings).toContain("VISION_MODEL_REQUIRED");
+  });
 });

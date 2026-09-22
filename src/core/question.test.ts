@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hasQuestionTextConflict, parseQuestionText, validateQuestion } from "./question";
+import { hasQuestionStructure, hasQuestionTextConflict, parseQuestionText, validateQuestion } from "./question";
 
 describe("question parsing", () => {
   it("parses labelled options", () => {
@@ -41,5 +41,10 @@ describe("question parsing", () => {
   it("supports numeric labels beyond single digits", () => {
     const q = parseQuestionText("按顺序选择\n10. 第十项\n11. 第十一项");
     expect(q.options.map((option) => option.label)).toEqual(["10", "11"]);
+  });
+  it("recognizes complete text even when the user must confirm the question type", () => {
+    const q = parseQuestionText("哪个数字是偶数？\nA. 3\nB. 4");
+    expect(q.questionType).toBe("unknown");
+    expect(hasQuestionStructure(q)).toBe(true);
   });
 });

@@ -11,6 +11,11 @@ describe("OpenAI-compatible structured output", () => {
     const result = await structureOcrText("q A.x B.y", settings, "secret");
     expect(result.stem).toBe("q"); expect(fetch).toHaveBeenCalledTimes(2);
   });
+  it("falls back from json_schema on a provider's 422 schema rejection", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response("json_schema is not supported", { status: 422 })).mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ questionType: "single", stem: "q", context: "", options: [{ label: "A", text: "x" }, { label: "B", text: "y" }] }) } }] }), { status: 200 })));
+    const result = await structureOcrText("q A.x B.y", settings, "secret");
+    expect(result.stem).toBe("q"); expect(fetch).toHaveBeenCalledTimes(2);
+  });
   it("sends OCR text-box coordinates to the structure model", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ questionType: "single", stem: "q", context: "", options: [{ label: "A", text: "x" }, { label: "B", text: "y" }] }) } }] }), { status: 200 })));
     await structureOcrText("q\nA. x\nB. y", settings, "secret", undefined, [{ x: 1, y: 2, width: 20, height: 8, text: "q", confidence: .9 }]);
@@ -34,6 +39,10 @@ describe("OpenAI-compatible structured output", () => {
   });
   it("classifies an image rejection as unsupported vision", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("image_url is not supported", { status: 400 })));
+    await expect(recognizeWithVision("data:image/png;base64,AA==", settings, "secret")).rejects.toMatchObject({ unsupportedVision: true, retryable: false });
+  });
+  it("classifies an OpenAI-compatible 415 image rejection as unsupported vision", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("content type image_url is unsupported", { status: 415 })));
     await expect(recognizeWithVision("data:image/png;base64,AA==", settings, "secret")).rejects.toMatchObject({ unsupportedVision: true, retryable: false });
   });
   it("does not retry when the caller already cancelled", async () => {
