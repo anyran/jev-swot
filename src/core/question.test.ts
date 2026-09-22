@@ -9,6 +9,10 @@ describe("question parsing", () => {
     expect(validateQuestion(q)).toContain("请确认题目是单选还是多选");
   });
   it("flags diagrams", () => expect(parseQuestionText("如图所示\nA. 1\nB. 2").warnings).toContain("POSSIBLE_DIAGRAM"));
+  it("flags geometry and chemistry visual cues", () => {
+    expect(parseQuestionText("几何图中阴影面积是多少？\nA. 1\nB. 2").warnings).toContain("POSSIBLE_DIAGRAM");
+    expect(parseQuestionText("化学结构式对应的物质是？\nA. 甲\nB. 乙").warnings).toContain("POSSIBLE_DIAGRAM");
+  });
   it("rejects duplicate option labels", () => {
     const q = parseQuestionText("题目\nA. 一\nB. 二");
     q.options[1].label = "a";

@@ -2,7 +2,7 @@ import type { ExtractedQuestion, QuestionOption, RecognitionWarning } from "../s
 
 const OPTION_RE = /^\s*(?:([A-Ha-h])|([1-9]\d{0,2})|([①②③④⑤⑥⑦⑧⑨]))[.、)）:]\s*(.+)$/;
 const FORMULA_RE = /[∑√∫≈≠≤≥^]|\b(?:sin|cos|tan|log)\b|\$[^$]+\$/i;
-const DIAGRAM_RE = /(?:如图|下图|曲线|阴影|图表|diagram|graph|figure)/i;
+const DIAGRAM_RE = /(?:如图|下图|图中|曲线|阴影|图表|统计图|几何|化学结构|结构式|坐标系|示意图|diagram|graph|figure|chart)/i;
 const MULTIPLE_RE = /(?:多选|可多选|选择所有|所有正确|select all|multiple choice)/i;
 const SINGLE_RE = /(?:单选|只能选择一项|判断题|single choice|true or false)/i;
 
