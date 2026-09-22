@@ -2,11 +2,13 @@
 
 ## 自动门槛
 
-- [ ] `npm ci`
-- [ ] `npm run models:fetch`
-- [ ] `npm run release`
-- [ ] `release/jevanswer-<version>.zip` 能作为未打包扩展加载
-- [ ] Chrome 扩展页无 manifest、CSP 或 service worker 错误
+- [x] `npm ci`（锁文件安装）
+- [x] 固定 revision 的模型资产通过 `npm run verify:models` SHA-256 校验
+- [x] `npm run release`（类型检查、18 项单元测试、模型、构建、Chrome 冒烟及 ZIP）
+- [x] 生产目录作为未打包扩展加载并实际运行 PP-OCRv5
+- [x] Chrome 无 manifest、CSP 或 service worker 错误
+- [x] 发布 ZIP 包含模型、WASM、许可证、第三方声明和隐私说明
+- [x] `npm run assets:store` 可重复生成 1280×800 商店截图
 
 ## 必须人工验证
 
@@ -21,8 +23,9 @@
 
 ## Chrome Web Store
 
-- [ ] 托管并填写公开隐私政策 URL
-- [ ] 准备商店截图、简短说明、详细说明和支持邮箱
+- [ ] 推送后在仓库 Settings → Pages 中选择 GitHub Actions，确认 `https://anyran.github.io/jev-swot/privacy.html` 可公开访问
+- [x] 准备商店截图、简短说明、详细说明和权限说明
+- [ ] 在 Chrome Web Store 开发者账号中验证支持邮箱
 - [ ] 解释 `storage`、`offscreen`、`activeTab`、站点访问及可选主机权限用途
 - [ ] 确认扩展只执行包内代码，模型与 WASM 均随包发布
 - [ ] 完成许可证审计并随发行包保留 `THIRD_PARTY_NOTICES.md`
