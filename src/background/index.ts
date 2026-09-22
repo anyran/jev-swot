@@ -174,7 +174,6 @@ async function recognizeFallback(base: ExtractedQuestion, screenshot: string, de
   parsed.recognitionConfidence = ocr.confidence;
   const inheritedWarnings = base.warnings.filter((warning) => warning !== "INCOMPLETE_OPTIONS");
   parsed.warnings = [...new Set([...inheritedWarnings, ...parsed.warnings, ...(ocr.warnings ?? []), ...(visionFallbackWarning ? [visionFallbackWarning] : [])])];
-  if (hasQuestionTextConflict(base, parsed)) parsed.warnings.push("DOM_OCR_CONFLICT");
   let excludedText = "";
   if (secrets.llmApiKey) {
     try {
@@ -189,6 +188,7 @@ async function recognizeFallback(base: ExtractedQuestion, screenshot: string, de
   } else {
     parsed.warnings.push("STRUCTURE_REVIEW_REQUIRED");
   }
+  if (hasQuestionTextConflict(base, parsed)) parsed.warnings.push("DOM_OCR_CONFLICT");
   parsed.warnings = [...new Set(parsed.warnings)];
   attachOcrRects(parsed, ocr.boxes ?? [], base.sourceRect, cropped.width, cropped.height);
   return { question: parsed, preview: { imageDataUrl: questionImage, width: cropped.width, height: cropped.height, boxes: ocr.boxes ?? [], excludedText: excludedText || undefined } };
@@ -220,7 +220,9 @@ function normalizeParsed(parsed: Partial<ExtractedQuestion> & { ignoredText?: st
   const visualDependencyReason = typeof parsed.visualDependencyReason === "string" ? stripExcludedText(parsed.visualDependencyReason, parsed.ignoredText) || base.visualDependencyReason : base.visualDependencyReason;
   const contextParts = [typeof parsed.context === "string" ? stripExcludedText(parsed.context, parsed.ignoredText) : base.context?.trim() || ""];
   if (visualDependencyReason && !contextParts[0].includes(visualDependencyReason)) contextParts.push(`视觉信息：${visualDependencyReason}`);
-  const warnings = [...base.warnings, ...(Array.isArray(parsed.warnings) ? parsed.warnings.filter(isRecognitionWarning) : [])];
+  const normalizedStem = typeof parsed.stem === "string" ? stripExcludedText(parsed.stem, parsed.ignoredText) : base.stem;
+  const modelReplacedIncompleteStructure = modelSuppliedOptions && candidateOptions.length >= 2 && !!normalizedStem;
+  const warnings = [...base.warnings.filter((warning) => !(modelReplacedIncompleteStructure && warning === "INCOMPLETE_OPTIONS")), ...(Array.isArray(parsed.warnings) ? parsed.warnings.filter(isRecognitionWarning) : [])];
   if (modelSuppliedOptions && candidateOptions.length < 2) warnings.push("INCOMPLETE_OPTIONS");
   if (typeof parsed.stem === "string" && !parsed.stem.trim()) warnings.push("INCOMPLETE_OPTIONS");
   if (visualDependency) warnings.push("POSSIBLE_DIAGRAM");
@@ -230,7 +232,7 @@ function normalizeParsed(parsed: Partial<ExtractedQuestion> & { ignoredText?: st
     ...base,
     source,
     questionType,
-    stem: typeof parsed.stem === "string" ? stripExcludedText(parsed.stem, parsed.ignoredText) : base.stem,
+    stem: normalizedStem,
     context: contextParts.filter(Boolean).join("\n"),
     options,
     recognitionConfidence: confidence,

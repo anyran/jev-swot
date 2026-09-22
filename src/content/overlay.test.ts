@@ -26,6 +26,10 @@ describe("compact answer summary", () => {
     expect(summarizeAnswer(probability)).toMatchObject({ label: "A", uncertain: true, detail: "55%" });
   });
 
+  it("does not present an empty single distribution as a confirmed answer", () => {
+    expect(summarizeAnswer({ mode: "single-distribution", options: [], model: "jev-test" })).toEqual({ label: "待确认", uncertain: true, detail: "" });
+  });
+
   it("shows all multiple-choice options above the selection threshold", () => {
     const probability: ProbabilityResult = {
       mode: "independent-selection",
