@@ -52,6 +52,18 @@ npm run release
 [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md) 中的真实 API 和跨平台人工验收。
 隐私数据流见 [`docs/PRIVACY.md`](docs/PRIVACY.md)。
 
+如果已经准备好真实凭据，可用以下命令做一次不落盘的线上预检。脚本不会打印密钥；
+只设置 `JEV_TYPESAFE_API_KEY` 时验证 JEV，额外设置 `JEV_LLM_BASE_URL`、
+`JEV_LLM_MODEL` 和 `JEV_LLM_API_KEY` 时还会验证普通文本模型及视觉能力：
+
+```bash
+JEV_TYPESAFE_API_KEY='…' \
+JEV_LLM_BASE_URL='https://api.example.com/v1' \
+JEV_LLM_MODEL='model-name' \
+JEV_LLM_API_KEY='…' \
+npm run verify:live
+```
+
 ## 数据与使用边界
 
 插件不会勾选或提交网页答案，也不提供监考规避能力。截图仅在用户主动触发且启用

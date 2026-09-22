@@ -15,6 +15,7 @@
     "assets:store": "node scripts/capture-store-assets.mjs",
     "models:fetch": "node scripts/fetch-models.mjs",
     "verify:models": "node scripts/verify-models.mjs",
+    "verify:live": "node scripts/verify-live.mjs",
     "verify:build": "node scripts/verify-build.mjs",
     "release": "npm run check && npm test && npm run verify:models && npm run build && npm run verify:build && npm run test:smoke && node scripts/package-release.mjs"
   },
