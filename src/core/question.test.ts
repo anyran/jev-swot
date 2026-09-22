@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hasQuestionStructure, hasQuestionTextConflict, parseQuestionText, validateQuestion } from "./question";
+import { fallbackOptionLabel, hasQuestionStructure, hasQuestionTextConflict, parseQuestionText, validateQuestion } from "./question";
 
 describe("question parsing", () => {
   it("parses labelled options", () => {
@@ -47,5 +47,10 @@ describe("question parsing", () => {
     const q = parseQuestionText("哪个数字是偶数？\nA. 3\nB. 4");
     expect(q.questionType).toBe("unknown");
     expect(hasQuestionStructure(q)).toBe(true);
+  });
+  it("keeps generated labels unique for high-cardinality choices", () => {
+    expect(fallbackOptionLabel(0)).toBe("A");
+    expect(fallbackOptionLabel(25)).toBe("Z");
+    expect(fallbackOptionLabel(26)).toBe("27");
   });
 });

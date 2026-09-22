@@ -1,6 +1,6 @@
 import { askJev } from "../core/typesafe";
 import { LlmError, explainAnswer, recognizeWithVision, streamExplanation, structureOcrText } from "../core/llm";
-import { hasQuestionStructure, hasQuestionTextConflict, parseQuestionText, stableOptionId, validateQuestion } from "../core/question";
+import { fallbackOptionLabel, hasQuestionStructure, hasQuestionTextConflict, parseQuestionText, stableOptionId, validateQuestion } from "../core/question";
 import { getSecrets, getSettings, setSecrets } from "../shared/storage";
 import type { ExtractedQuestion, RecognitionPreview, WorkerRequest, WorkerResponse } from "../shared/types";
 
@@ -192,7 +192,7 @@ function normalizeParsed(parsed: Partial<ExtractedQuestion>, base: ExtractedQues
   const candidateOptions = (Array.isArray(parsed.options) ? parsed.options : []).filter((option) => option && typeof option === "object" && typeof option.text === "string" && option.text.trim());
   const options = (candidateOptions.length >= 2 ? candidateOptions : base.options).map((option, index) => ({
     id: stableOptionId(index),
-    label: typeof option.label === "string" && option.label.trim() ? option.label.trim().toUpperCase() : String.fromCharCode(65 + index),
+    label: typeof option.label === "string" && option.label.trim() ? option.label.trim().toUpperCase() : fallbackOptionLabel(index),
     text: option.text.trim(),
     confidence: option.confidence
   }));

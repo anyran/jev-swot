@@ -1,4 +1,5 @@
 import type { ExtractedQuestion, QuestionOption, RecognitionWarning } from "../shared/types";
+import { fallbackOptionLabel } from "../core/question";
 
 const EXCLUDED = "script,style,noscript,nav,header,footer,aside,iframe,[role='banner'],[role='navigation'],[role='complementary'],[hidden],[aria-hidden='true'],[data-jev-swot-root],[data-ad],[data-advertisement],[aria-label*='advertisement' i],[aria-label*='广告'],[class~='ad'],[class*=' ad-'],[class^='ad-'],[class*='advertisement' i],[id*='advertisement' i]";
 const VISUAL_CUE = /(?:如图|下图|图中|曲线|折线|柱状|散点|阴影|面积|图表|统计图|几何|化学(?:结构|式)|结构式|分子|坐标(?:系|轴)?|示意图|diagram|graph|figure|chart|plot|axis|geometry|chemical\s+structure|molecule)/i;
@@ -61,7 +62,7 @@ export function extractFromElement(element: Element): ExtractedQuestion {
   const options: QuestionOption[] = dedup.map((node, index) => {
     const raw = cleanText(visibleText(node) || node.getAttribute("aria-label") || node.getAttribute("title") || node.querySelector("input, [role=radio], [role=checkbox], [role=option]")?.getAttribute("aria-label") || "");
     const match = /^\s*([A-Ha-h]|[1-9]\d{0,2}|[①②③④⑤⑥⑦⑧⑨])(?:[.、)）:]|\s+)\s*(.*)$/.exec(raw);
-    return { id: `option_${index + 1}`, label: match?.[1]?.toUpperCase() ?? String.fromCharCode(65 + index), text: match?.[2] || raw };
+    return { id: `option_${index + 1}`, label: match?.[1]?.toUpperCase() ?? fallbackOptionLabel(index), text: match?.[2] || raw };
   }).filter((x) => x.text);
   const allText = visibleText(element);
   let stem = allText;

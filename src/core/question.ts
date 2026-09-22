@@ -7,6 +7,7 @@ const MULTIPLE_RE = /(?:多选|可多选|选择所有|所有正确|select all|mu
 const SINGLE_RE = /(?:单选|只能选择一项|判断题|single choice|true or false)/i;
 
 export function stableOptionId(index: number): string { return `option_${index + 1}`; }
+export function fallbackOptionLabel(index: number): string { return index < 26 ? String.fromCharCode(65 + index) : String(index + 1); }
 
 export function parseQuestionText(text: string, rect = { x: 0, y: 0, width: 0, height: 0 }): ExtractedQuestion {
   const lines = text.split(/\n+/).map((x) => x.trim()).filter(Boolean);

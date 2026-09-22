@@ -1,4 +1,5 @@
 import type { ExtractedQuestion, ProbabilityResult, RecognitionPreview, WorkerResponse } from "../shared/types";
+import { fallbackOptionLabel } from "../core/question";
 
 export class ResultOverlay {
   private host = document.createElement("div");
@@ -83,7 +84,7 @@ export class ResultOverlay {
     if (!this.question) return;
     const stem = (this.root.querySelector("#stem") as HTMLTextAreaElement).value.trim();
     const lines = (this.root.querySelector("#options") as HTMLTextAreaElement).value.split("\n").map((x) => x.trim()).filter(Boolean);
-    const options = lines.map((line, i) => { const m = /^([A-Ha-h]|[1-9]\d{0,2}|[①-⑨])[.、)）:]?\s*(.*)$/.exec(line); return { id: `option_${i + 1}`, label: m?.[1]?.toUpperCase() ?? String.fromCharCode(65 + i), text: m?.[2] || line }; });
+    const options = lines.map((line, i) => { const m = /^([A-Ha-h]|[1-9]\d{0,2}|[①-⑨])[.、)）:]?\s*(.*)$/.exec(line); return { id: `option_${i + 1}`, label: m?.[1]?.toUpperCase() ?? fallbackOptionLabel(i), text: m?.[2] || line }; });
     const context = (this.root.querySelector("#context") as HTMLTextAreaElement).value.trim();
     const q: ExtractedQuestion = { ...this.question, source: "user-edited", stem, options, context, questionType: (this.root.querySelector("#type") as HTMLSelectElement).value as "single" | "multiple", recognitionConfidence: 1, warnings: [] };
     this.retry(q);
