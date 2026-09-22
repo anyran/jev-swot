@@ -52,9 +52,11 @@ chrome.runtime.onMessage.addListener((message: { type?: string } | RuntimeProgre
   if (message.type === "ANALYZE_PROGRESS" && "requestId" in message && message.requestId === activeRequestId) overlay.progress(message.message);
 });
 document.addEventListener("dblclick", (event) => {
-  if (!event.altKey || isEditable(event.target) || isExtensionNode(event.target)) return;
+  if (!event.altKey || isEditable(event.target) || isExtensionNode(event.target) || disabledForSite === true) return;
+  // Cancel the page's double-click action synchronously; the settings check
+  // below may need to await storage, which is too late for preventDefault.
+  event.preventDefault(); event.stopPropagation();
   void whenSiteEnabled(() => {
-    event.preventDefault(); event.stopPropagation();
     const target = event.target instanceof Element ? event.target : document.body;
     // Alt + double-click is an explicit user gesture; allow a best-effort
     // screenshot fallback for image/canvas questions. Chrome may still require
