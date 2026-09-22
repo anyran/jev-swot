@@ -41,17 +41,19 @@ if (llmValues.every((value) => !value)) {
   fail("Set all three OpenAI-compatible variables together: JEV_LLM_BASE_URL, JEV_LLM_MODEL and JEV_LLM_API_KEY.");
 } else {
   const [baseUrl, model, apiKey] = llmValues;
-  const text = await requestLlm(baseUrl, model, apiKey, {
+  const textResponse = await requestLlm(baseUrl, model, apiKey, {
     temperature: 0,
     messages: [
-      { role: "system", content: "只输出 JSON。" },
-      { role: "user", content: '返回 {"ok":true}。' }
+      { role: "system", content: "你是 OCR 后的题目结构化器，不是答题器。只输出 JSON；排除正确答案和解析，并把排除内容写入 ignoredText。" },
+      { role: "user", content: JSON.stringify({ text: "哪个数字是偶数？\nA. 3\nB. 4\n正确答案：B\n解析：偶数可以被二整除。", boxes: [] }) }
     ],
     response_format: { type: "json_object" }
   });
-  const textContent = readContent(text);
-  if (!textContent.includes("ok")) fail("OpenAI-compatible text response did not contain the expected JSON marker.");
-  console.log("OpenAI-compatible text model: ok");
+  const structured = parseJsonObject(readContent(textResponse));
+  if (!structured || !["single", "multiple", "unknown"].includes(structured.questionType) || typeof structured.stem !== "string" || !Array.isArray(structured.options) || structured.options.length < 2 || typeof structured.context !== "string" || typeof structured.visualDependency !== "boolean" || typeof structured.visualDependencyReason !== "string" || typeof structured.ignoredText !== "string") {
+    fail("OpenAI-compatible text model did not return the required question structure and ignoredText ledger.");
+  }
+  console.log("OpenAI-compatible text model: structured-question JSON ok");
 
   const visionResponse = await requestLlm(baseUrl, model, apiKey, {
     temperature: 0,
@@ -71,11 +73,24 @@ async function requestJev(apiKey, question) {
 }
 
 async function requestLlm(baseUrl, model, apiKey, body, isVision = false) {
+  const url = `${baseUrl.replace(/\/$/, "")}/chat/completions`;
+  const send = (requestBody) => fetchWithTimeout(url, { method: "POST", headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ model, ...requestBody }) });
   let response;
   try {
-    response = await fetchWithTimeout(`${baseUrl.replace(/\/$/, "")}/chat/completions`, { method: "POST", headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ model, ...body }) });
+    response = await send(body);
   } catch (error) {
     return isVision ? { kind: "error", message: error instanceof Error ? error.message : "network error" } : fail("OpenAI-compatible text request failed.");
+  }
+  if (!isVision && !response.ok && body.response_format && [400, 422].includes(response.status)) {
+    const firstMessage = await response.text().catch(() => "");
+    if (/response_format|json_schema|structured|schema|unsupported.*format|not.*support.*format/i.test(firstMessage) || !firstMessage.trim()) {
+      const fallbackBody = { ...body };
+      delete fallbackBody.response_format;
+      try { response = await send(fallbackBody); }
+      catch { return fail("OpenAI-compatible text request failed during response-format fallback."); }
+    } else {
+      return fail(`OpenAI-compatible text request failed with HTTP ${response.status}.`);
+    }
   }
   if (response.ok) return isVision ? { kind: "supported" } : readJsonResponse("OpenAI-compatible model", response);
   const message = await response.text().catch(() => "");
@@ -99,6 +114,18 @@ async function readJsonResponse(name, response) {
   catch { fail(`${name} response was not valid JSON.`); }
 }
 
-function readContent(response) { return String(response.choices?.[0]?.message?.content ?? ""); }
+function readContent(response) {
+  const content = response.choices?.[0]?.message?.content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.map((part) => typeof part === "string" ? part : part && typeof part === "object" && typeof part.text === "string" ? part.text : "").join("");
+}
+function parseJsonObject(value) {
+  const cleaned = String(value).trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  const start = cleaned.indexOf("{"), end = cleaned.lastIndexOf("}");
+  if (start < 0 || end <= start) return undefined;
+  try { return JSON.parse(cleaned.slice(start, end + 1)); }
+  catch { return undefined; }
+}
 function numberValue(value) { const number = Number(value); return Number.isFinite(number) ? Math.max(0, Math.min(1, number)) : undefined; }
 function fail(message) { console.error(message); process.exit(1); }
