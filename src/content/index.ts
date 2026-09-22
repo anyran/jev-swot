@@ -40,7 +40,6 @@ let analysisSequence = 0;
 let activeRequestId: string | undefined;
 let explanationPort: chrome.runtime.Port | undefined;
 let selectionCaptureAuthorized = false;
-let lastCaptureAuthorized = false;
 let disabledForSite: boolean | undefined;
 let disabledStateReady = refreshDisabledState();
 chrome.storage.onChanged.addListener((changes, areaName) => { if (areaName === "local" && changes.settings) disabledStateReady = refreshDisabledState(); });
@@ -64,7 +63,10 @@ document.addEventListener("dblclick", (event) => {
     // the extension command/action to grant activeTab, in which case the
     // background returns a recoverable message telling the user to use the
     // selection shortcut.
-    analyze(extractFromElement(findQuestionContainer(target)), undefined, true);
+    // Alt + double-click can analyze complete DOM questions, but it does not
+    // grant the temporary screenshot permission required by a visual fallback.
+    // The user must use the selection shortcut when a screenshot is needed.
+    analyze(extractFromElement(findQuestionContainer(target)), undefined, false);
   });
 }, true);
 
@@ -90,8 +92,7 @@ function up(event: PointerEvent) {
 }
 function cancelOnEscape(event: KeyboardEvent) { if (event.key === "Escape") { selectionCaptureAuthorized = false; cleanup(); } }
 function cleanup() { selecting = false; selectionBox?.remove(); selectionBox = null; document.documentElement.style.cursor = ""; document.removeEventListener("pointerdown", down, true); document.removeEventListener("pointermove", move, true); document.removeEventListener("pointerup", up, true); document.removeEventListener("keydown", cancelOnEscape, true); }
-async function analyze(question: ExtractedQuestion, visionConsent?: "allow" | "deny", captureAuthorized = lastCaptureAuthorized) {
-  lastCaptureAuthorized = captureAuthorized;
+async function analyze(question: ExtractedQuestion, visionConsent?: "allow" | "deny", captureAuthorized = false) {
   cancelActive(); const sequence = ++analysisSequence, requestId = crypto.randomUUID(); activeRequestId = requestId; overlay.loading(question);
   const response = await chrome.runtime.sendMessage({ type: "ANALYZE", requestId, question, devicePixelRatio: window.devicePixelRatio, visionConsent, captureAuthorized }).catch((error: unknown) => ({ ok: false, code: "UNEXPECTED", message: error instanceof Error ? error.message : "扩展后台暂时不可用，请重试。", recoverable: true })) as WorkerResponse;
   if (sequence === analysisSequence) { activeRequestId = undefined; overlay.show(response); }

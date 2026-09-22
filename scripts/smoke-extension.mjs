@@ -115,6 +115,8 @@ try {
   });
   if (directAnswer.gate !== "JEV_KEY_MISSING" || !directAnswer.answer?.ok || directAnswer.answer.directAnswer?.answerLabels?.join(",") !== "B") throw new Error(`Ordinary-model direct answer smoke failed: ${JSON.stringify(directAnswer)}`);
   if (directAnswerRequests !== 1) throw new Error(`Ordinary-model direct answer request was not observed exactly once (direct=${directAnswerRequests})`);
+  const screenshotWithoutGesture = await page.evaluate(() => chrome.runtime.sendMessage({ type: "ANALYZE", requestId: crypto.randomUUID(), question: { source: "dom", questionType: "unknown", stem: "", options: [], sourceRect: { x: 0, y: 0, width: 320, height: 120 }, recognitionConfidence: 0.2, warnings: ["INCOMPLETE_OPTIONS"] }, captureAuthorized: false }));
+  if (screenshotWithoutGesture?.code !== "CAPTURE_REQUIRES_SHORTCUT") throw new Error(`Screenshot fallback bypassed the explicit gesture gate: ${JSON.stringify(screenshotWithoutGesture)}`);
   await page.evaluate(() => chrome.storage.session.set({ secrets: { typeSafeApiKey: "smoke-only", llmApiKey: "smoke-llm" } }));
   const fallback = await page.evaluate(async () => {
     const canvas = document.createElement("canvas"); canvas.width = 900; canvas.height = 340;
