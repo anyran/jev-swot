@@ -25,6 +25,10 @@ async function handle(request: Exclude<WorkerRequest, { type: "OCR" | "CROP_IMAG
     if (!secrets.llmApiKey) return { ok: false, code: "LLM_KEY_MISSING", message: "请先在设置页填写普通模型 API Key。", recoverable: true };
     return { ok: true, explanation: await explainAnswer(request.question, request.probability, settings.llm, secrets.llmApiKey) };
   }
+  const host = sender.tab?.url ? new URL(sender.tab.url).hostname : "";
+  if (host && settings.disabledHosts.some((entry) => host === entry || host.endsWith(`.${entry}`))) {
+    return { ok: false, code: "SITE_DISABLED", message: "JevAnswer 已在此站点禁用。", recoverable: true };
+  }
   let question = request.question;
   if (validateQuestion(question).length) {
     const screenshot = request.screenshot ?? await capture(sender.tab?.windowId);
