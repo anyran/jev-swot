@@ -102,7 +102,9 @@ async function handle(request: Exclude<WorkerRequest, { type: "OCR" | "CROP_IMAG
     const controller = new AbortController(); activeRequests.set(request.requestId, controller);
     try {
       const llm = effectiveLlm(settings.llm, currentCapabilities(settings.llm, secrets));
-      return { ok: true, question: request.question, directAnswer: await answerWithLlm(request.question, llm, secrets.llmApiKey, controller.signal) };
+      const directAnswer = await answerWithLlm(request.question, llm, secrets.llmApiKey, controller.signal);
+      await cacheCapabilities(settings.llm, secrets, undefined, directAnswer.structuredOutputDetected);
+      return { ok: true, question: request.question, directAnswer };
     } catch (error) {
       return { ok: false, code: controller.signal.aborted ? "CANCELLED" : "DIRECT_ANSWER_FAILED", message: controller.signal.aborted ? "已取消普通模型答题。" : messageOf(error), recoverable: true, question: request.question };
     } finally { activeRequests.delete(request.requestId); }

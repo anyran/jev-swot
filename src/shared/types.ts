@@ -40,6 +40,7 @@ export interface DirectAnswerResult {
   knowledgePoints: string[];
   uncertainty: string;
   model: string;
+  structuredOutputDetected?: Exclude<Capability, "auto">;
 }
 export type Capability = "auto" | "supported" | "unsupported";
 export interface LLMSettings {

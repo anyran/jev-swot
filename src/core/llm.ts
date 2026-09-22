@@ -120,7 +120,7 @@ export async function answerWithLlm(question: ExtractedQuestion, settings: LLMSe
   if (!explanation) throw new LlmError("普通模型没有返回答案解析。", undefined, false, false);
   const knowledgePoints = Array.isArray(result.data.knowledgePoints) ? result.data.knowledgePoints.filter((value): value is string => typeof value === "string" && value.trim().length > 0).map((value) => value.trim()).slice(0, 8) : [];
   const uncertainty = typeof result.data.uncertainty === "string" ? result.data.uncertainty.trim() : "未提供不确定性说明。";
-  return { answerOptionIds, answerLabels: answerOptionIds.map((id) => question.options.find((option) => option.id === id)!.label), explanation, knowledgePoints, uncertainty, model: settings.model };
+  return { answerOptionIds, answerLabels: answerOptionIds.map((id) => question.options.find((option) => option.id === id)!.label), explanation, knowledgePoints, uncertainty, model: settings.model, structuredOutputDetected: result.structuredOutputDetected };
 }
 export async function explainAnswer(question: ExtractedQuestion, probability: ProbabilityResult, settings: LLMSettings, apiKey: string, signal?: AbortSignal): Promise<string> {
   const response = await call(settings, apiKey, { model: settings.model, temperature: 0.2, messages: explanationMessages(question, probability) }, signal);

@@ -24,7 +24,7 @@ describe("OpenAI-compatible structured output", () => {
   it("can answer a confirmed question directly with the ordinary model", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ answerOptionIds: ["option_2"], explanation: "4 是偶数。", knowledgePoints: ["偶数可被 2 整除"], uncertainty: "题干信息充分。" }) } }] }), { status: 200 })));
     const result = await answerWithLlm({ source: "dom", questionType: "single", stem: "哪个数字是偶数？", options: [{ id: "option_1", label: "A", text: "3" }, { id: "option_2", label: "B", text: "4" }], sourceRect: { x: 0, y: 0, width: 1, height: 1 }, recognitionConfidence: 1, warnings: [] }, settings, "secret");
-    expect(result).toMatchObject({ answerOptionIds: ["option_2"], answerLabels: ["B"], explanation: "4 是偶数。" });
+    expect(result).toMatchObject({ answerOptionIds: ["option_2"], answerLabels: ["B"], explanation: "4 是偶数。", structuredOutputDetected: "supported" });
     const body = JSON.parse((vi.mocked(fetch).mock.calls[0][1] as RequestInit).body as string);
     expect(body.response_format.json_schema.name).toBe("direct_answer");
   });
