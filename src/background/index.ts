@@ -65,7 +65,7 @@ async function handle(request: Exclude<WorkerRequest, { type: "OCR" | "CROP_IMAG
   }
   if (request.type === "CLEAR_SESSION") { await chrome.storage.session.clear(); return { ok: true }; }
   if (request.type === "RELEASE_OCR") {
-    if (await chrome.offscreen.hasDocument()) await chrome.offscreen.closeDocument();
+    if (await hasOffscreenDocument()) await chrome.offscreen.closeDocument();
     return { ok: true };
   }
   const settings = await getSettings();
@@ -270,12 +270,28 @@ async function capture(windowId?: number): Promise<string> {
   return windowId == null ? chrome.tabs.captureVisibleTab({ format: "png" }) : chrome.tabs.captureVisibleTab(windowId, { format: "png" });
 }
 async function ensureOffscreen(): Promise<void> {
-  if (await chrome.offscreen.hasDocument()) return;
+  if (await hasOffscreenDocument()) return;
   if (!offscreenCreation) offscreenCreation = (async () => {
-    if (await chrome.offscreen.hasDocument()) return;
+    if (await hasOffscreenDocument()) return;
     await chrome.offscreen.createDocument({ url: "offscreen.html", reasons: [chrome.offscreen.Reason.BLOBS], justification: "Crop screenshots and run local PP-OCRv5 inference without blocking the web page" });
   })().finally(() => { offscreenCreation = undefined; });
   await offscreenCreation;
+}
+async function hasOffscreenDocument(): Promise<boolean> {
+  const offscreen = chrome.offscreen as typeof chrome.offscreen & { hasDocument?: () => Promise<boolean> };
+  if (typeof offscreen.hasDocument === "function") return offscreen.hasDocument();
+  const runtime = chrome.runtime as typeof chrome.runtime & {
+    getContexts?: (filter: { contextTypes: string[]; documentUrls?: string[] }) => Promise<Array<unknown>>;
+  };
+  if (typeof runtime.getContexts === "function") {
+    const contexts = await runtime.getContexts({ contextTypes: ["OFFSCREEN_DOCUMENT"], documentUrls: [chrome.runtime.getURL("offscreen.html")] });
+    return contexts.length > 0;
+  }
+  const workerClients = (globalThis as typeof globalThis & { clients?: { matchAll: () => Promise<Array<{ url?: string }>> } }).clients;
+  if (!workerClients) return false;
+  const clients = await workerClients.matchAll();
+  const offscreenUrl = chrome.runtime.getURL("offscreen.html");
+  return clients.some((client) => client.url === offscreenUrl);
 }
 let offscreenCreation: Promise<void> | undefined;
 function failure(error: unknown): WorkerResponse { return { ok: false, code: "UNEXPECTED", message: error instanceof Error ? error.message : "发生未知错误", recoverable: true }; }

@@ -4,6 +4,8 @@
 [TypeSafe Jev](https://docs.typesafe.ai/introduction) 返回各选项概率，并使用
 OpenAI 兼容模型完成截图文字结构化与按需答案解析。
 
+首版目标运行环境为 Chrome/Chromium 109 及以上；本地 OCR 使用扩展自带的 Offscreen Document 和 PP-OCRv5，旧版 Offscreen 文档查询接口会自动走兼容路径。
+
 ## 功能
 
 - `Ctrl/Command + Shift + Y` 后拖拽框选题目。

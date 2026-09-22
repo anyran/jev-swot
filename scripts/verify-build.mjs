@@ -3,6 +3,7 @@ import { readdir, readFile } from "node:fs/promises";
 
 const manifest = JSON.parse(await readFile(new URL("../dist/manifest.json", import.meta.url), "utf8"));
 if (manifest.manifest_version !== 3) throw new Error("dist manifest is not MV3");
+if (manifest.minimum_chrome_version !== "109") throw new Error("dist manifest minimum Chrome version is out of date");
 if (manifest.default_locale !== "zh_CN" || manifest.name !== "__MSG_extName__" || manifest.description !== "__MSG_extDescription__") throw new Error("dist manifest localization is out of date");
 const requiredPermissions = ["activeTab", "scripting", "storage", "commands", "offscreen"];
 if (!requiredPermissions.every((permission) => manifest.permissions?.includes(permission))) throw new Error("dist manifest is missing a required extension permission");
