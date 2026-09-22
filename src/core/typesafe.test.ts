@@ -40,4 +40,13 @@ describe("JEV request mapping", () => {
     await expect(askJev(base, "secret")).rejects.toThrow(/\[redacted\]/);
     await expect(askJev(base, "secret")).rejects.not.toThrow(/secret/);
   });
+  it("aborts an in-flight JEV request", async () => {
+    const controller = new AbortController();
+    vi.stubGlobal("fetch", vi.fn((_url: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+    })));
+    const pending = askJev(base, "secret", controller.signal);
+    controller.abort();
+    await expect(pending).rejects.toThrow();
+  });
 });
