@@ -242,6 +242,9 @@ try {
   await restartedPage.evaluate(() => chrome.runtime.sendMessage({ type: "CLEAR_SESSION" }));
   const remainingSession = await restartedPage.evaluate(() => chrome.storage.session.get(null));
   if (Object.keys(remainingSession).length !== 0) throw new Error(`Session secrets were not cleared: ${Object.keys(remainingSession).join(", ")}`);
+  const persistedAfterSessionClear = await restartedPage.evaluate(() => chrome.storage.local.get("savedSecrets"));
+  if (persistedAfterSessionClear.savedSecrets?.typeSafeApiKey !== "smoke-only" || persistedAfterSessionClear.savedSecrets?.llmApiKey !== "smoke-llm") throw new Error("Clearing the session unexpectedly removed persisted API keys");
+  await restartedPage.evaluate(() => chrome.runtime.sendMessage({ type: "CLEAR_API_KEYS" }));
   const remainingLocal = await restartedPage.evaluate(() => chrome.storage.local.get("savedSecrets"));
   if (Object.keys(remainingLocal.savedSecrets ?? {}).length !== 0) throw new Error(`Persisted secrets were not cleared: ${Object.keys(remainingLocal.savedSecrets ?? {}).join(", ")}`);
   console.log(`Chrome loaded Jev 做题家（Jev SWOT） ${extensionId}; DOM→JEV, Canvas→local OCR→text model→JEV, and streaming explanation flows are healthy (${Math.round(ocr.confidence * 100)}%, ${ocr.backend}).`);

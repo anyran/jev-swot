@@ -70,7 +70,8 @@ export type WorkerRequest =
   | { type: "RELEASE_OCR" }
   | { type: "TEST_CONNECTIONS"; imageDataUrl: string }
   | { type: "GET_SETTINGS" }
-  | { type: "CLEAR_SESSION" };
+  | { type: "CLEAR_SESSION" }
+  | { type: "CLEAR_API_KEYS" };
 
 export type AnalysisProgressStage = "capture" | "vision" | "ocr-loading" | "ocr-running" | "jev";
 export type RuntimeProgressMessage = { type: "ANALYZE_PROGRESS"; requestId: string; stage: AnalysisProgressStage; message: string };
