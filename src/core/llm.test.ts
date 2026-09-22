@@ -60,6 +60,10 @@ describe("OpenAI-compatible structured output", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("content type image_url is unsupported", { status: 415 })));
     await expect(recognizeWithVision("data:image/png;base64,AA==", settings, "secret")).rejects.toMatchObject({ unsupportedVision: true, retryable: false });
   });
+  it("classifies a provider's invalid image input response as unsupported vision", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("invalid image input for this model", { status: 400 })));
+    await expect(recognizeWithVision("data:image/png;base64,AA==", settings, "secret")).rejects.toMatchObject({ unsupportedVision: true, retryable: false });
+  });
   it("keeps a transient vision 429 retryable instead of marking the model unsupported", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("busy", { status: 429 })));
     await expect(recognizeWithVision("data:image/png;base64,AA==", settings, "secret")).rejects.toMatchObject({ unsupportedVision: false, retryable: true, status: 429 });
