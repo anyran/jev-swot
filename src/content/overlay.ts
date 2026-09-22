@@ -14,6 +14,40 @@ export function summarizeAnswer(probability: ProbabilityResult): AnswerSummary {
   return { label: visible.length ? visible.map((option) => option.label).join("、") : "待确认", uncertain: selected.length === 0 || borderline, detail: selected.length ? "选择倾向" : "暂无过半概率" };
 }
 
+type RgbaColor = { r: number; g: number; b: number; a: number };
+export type OverlayPalette = {
+  text: string;
+  muted: string;
+  strong: string;
+  shadow: string;
+  bar: string;
+};
+
+/**
+ * Keep the compact answer close to the page's visual weight. The expanded
+ * panel remains fully readable, while the compact answer uses a low-alpha
+ * foreground and becomes more visible on hover/focus.
+ */
+export function overlayPaletteForLuminance(luminance = 1): OverlayPalette {
+  const lightBackground = luminance >= 0.52;
+  if (lightBackground) {
+    return {
+      text: "rgba(17,24,39,.52)",
+      muted: "rgba(17,24,39,.38)",
+      strong: "rgba(0,0,0,.66)",
+      shadow: "0 1px 2px rgba(255,255,255,.62),0 -1px 2px rgba(255,255,255,.62),1px 0 2px rgba(255,255,255,.62),-1px 0 2px rgba(255,255,255,.62)",
+      bar: "rgba(17,24,39,.18)"
+    };
+  }
+  return {
+    text: "rgba(255,255,255,.58)",
+    muted: "rgba(255,255,255,.44)",
+    strong: "rgba(255,255,255,.78)",
+    shadow: "0 1px 2px rgba(0,0,0,.58),0 -1px 2px rgba(0,0,0,.58),1px 0 2px rgba(0,0,0,.58),-1px 0 2px rgba(0,0,0,.58)",
+    bar: "rgba(255,255,255,.28)"
+  };
+}
+
 export class ResultOverlay {
   private host = document.createElement("div");
   private root: ShadowRoot;
@@ -103,7 +137,9 @@ export class ResultOverlay {
   private render(content: string) {
     if (!this.host.isConnected) document.documentElement.append(this.host);
     const toggle = this.probability || this.directResult ? `<button data-action="toggle-details">${this.expanded ? "收起" : "详情"}</button>` : "";
-    this.root.innerHTML = `<style>${CSS_TEXT}</style><section class="${this.expanded ? "expanded" : "compact"}" style="left:${this.position.left}px;top:${this.position.top}px"><header><b>Jev</b><small>Jev SWOT</small><span>${toggle}<button data-action="close">×</button></span></header><main>${content}</main></section>`;
+    const palette = this.nearbyPalette();
+    const paletteStyle = Object.entries(palette).map(([name, value]) => `--jev-${name}:${value}`).join(";");
+    this.root.innerHTML = `<style>${CSS_TEXT}</style><section class="${this.expanded ? "expanded" : "compact"}" style="left:${this.position.left}px;top:${this.position.top}px;${paletteStyle}"><header><b>Jev</b><small>Jev SWOT</small><span>${toggle}<button data-action="close">×</button></span></header><main>${content}</main></section>`;
     this.root.querySelector('[data-action="close"]')?.addEventListener("click", () => this.dismiss());
     this.root.querySelector('[data-action="cancel"]')?.addEventListener("click", () => { this.cancel(); this.expanded = true; this.render(`<div class="warning">已取消当前请求。</div>${this.editor()}`); });
     this.root.querySelector('[data-action="toggle-details"]')?.addEventListener("click", () => { this.expanded = !this.expanded; this.render(this.expanded ? this.details() : this.compact()); });
@@ -116,6 +152,39 @@ export class ResultOverlay {
     this.root.querySelectorAll<HTMLElement>("[data-option-id]").forEach((row) => row.addEventListener("click", () => this.highlightOption(row.dataset.optionId!)));
     this.root.querySelectorAll<HTMLElement>(".ocr-box").forEach((box) => box.addEventListener("click", () => { const summary = box.getAttribute("title"); if (summary) box.setAttribute("data-label", summary); }));
     this.bindDragging();
+  }
+  private nearbyPalette(): OverlayPalette {
+    const fallback = overlayPaletteForLuminance();
+    const doc = document as Document & {
+      elementsFromPoint?: (x: number, y: number) => Element[];
+    };
+    const getElements = doc.elementsFromPoint?.bind(document);
+    if (!getElements || typeof getComputedStyle !== "function") return fallback;
+
+    const previousPointerEvents = this.host.style.pointerEvents;
+    this.host.style.pointerEvents = "none";
+    try {
+      const viewportWidth = typeof innerWidth === "number" ? innerWidth : 1024;
+      const viewportHeight = typeof innerHeight === "number" ? innerHeight : 768;
+      const points = [
+        { x: this.position.left - 8, y: this.position.top - 8 },
+        { x: this.position.left + 4, y: this.position.top - 8 },
+        { x: this.position.left - 8, y: this.position.top + 28 },
+        { x: this.position.left + 92, y: this.position.top - 8 }
+      ];
+      for (const point of points) {
+        const x = Math.max(0, Math.min(viewportWidth - 1, point.x));
+        const y = Math.max(0, Math.min(viewportHeight - 1, point.y));
+        for (const element of getElements(x, y)) {
+          if (element === this.host || element.closest?.("[data-jev-swot-root]")) continue;
+          const luminance = backgroundLuminance(element);
+          if (luminance != null) return overlayPaletteForLuminance(luminance);
+        }
+      }
+    } finally {
+      this.host.style.pointerEvents = previousPointerEvents;
+    }
+    return fallback;
   }
   private highlightOption(id: string) {
     const rect = this.question?.options.find((option) => option.id === id)?.sourceRect;
@@ -155,8 +224,9 @@ function warningText(w: string) { return ({ LOW_OCR_CONFIDENCE: "OCR 置信度�
 function escapeHtml(value: string) { return value.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!); }
 const CSS_TEXT = `
 :host{all:initial}
-section{position:fixed;z-index:2147483647;left:12px;top:12px;width:220px;max-width:calc(100vw - 24px);max-height:calc(100vh - 24px);overflow:auto;background:transparent;color:#111827;border:0;border-radius:0;box-shadow:none;font:13px/1.4 system-ui,sans-serif;text-shadow:0 1px 2px rgba(255,255,255,.98),0 -1px 2px rgba(255,255,255,.98),1px 0 2px rgba(255,255,255,.98),-1px 0 2px rgba(255,255,255,.98)}
-section.compact{width:max-content;min-width:0;border-radius:0;background:transparent;box-shadow:none}
+section{position:fixed;z-index:2147483647;left:12px;top:12px;width:220px;max-width:calc(100vw - 24px);max-height:calc(100vh - 24px);overflow:auto;background:transparent;color:var(--jev-text,#111827);border:0;border-radius:0;box-shadow:none;font:13px/1.4 system-ui,sans-serif;text-shadow:var(--jev-shadow,0 1px 2px rgba(255,255,255,.98),0 -1px 2px rgba(255,255,255,.98),1px 0 2px rgba(255,255,255,.98),-1px 0 2px rgba(255,255,255,.98));transition:opacity .16s ease}
+section.compact{width:max-content;min-width:0;border-radius:0;background:transparent;box-shadow:none;opacity:.62}
+section.compact:hover,section.compact:focus-within{opacity:.96}
 section.compact header{border-bottom:0;padding:4px 6px;gap:4px}
 section.compact header>b,section.compact header small{display:none}
 section.compact header button{font-size:11px;padding:1px 4px}
@@ -164,21 +234,21 @@ section.compact main{padding:3px 8px 5px}
 section.expanded{width:360px;max-width:calc(100vw - 24px)}
 header{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 10px;border-bottom:0;cursor:move}
 header span{display:flex;gap:4px}
-header button{background:transparent;border:0;color:#111827;font-size:12px;padding:2px 5px;text-shadow:inherit}
+header button{background:transparent;border:0;color:var(--jev-text,#111827);font-size:12px;padding:2px 5px;text-shadow:inherit}
 main{padding:10px}
-.answer-compact{display:flex;align-items:baseline;gap:5px;white-space:nowrap;overflow:hidden;color:#111827}
-.answer-compact span{color:#111827;font-size:11px}
-.answer-compact strong{color:#000;font-size:18px;line-height:1.1;overflow:hidden;text-overflow:ellipsis}
-.answer-compact small{color:#111827}
+.answer-compact{display:flex;align-items:baseline;gap:5px;white-space:nowrap;overflow:hidden;color:var(--jev-text,#111827)}
+.answer-compact span{color:var(--jev-muted,var(--jev-text,#111827));font-size:11px}
+.answer-compact strong{color:var(--jev-strong,#000);font-size:18px;line-height:1.1;overflow:hidden;text-overflow:ellipsis}
+.answer-compact small{color:var(--jev-muted,var(--jev-text,#111827))}
 .row{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(48px,1fr) 52px;gap:8px;align-items:center;margin:9px 0}
 .row[data-option-id]{cursor:pointer}
 .row[data-option-id]:hover{background:rgba(255,255,255,.38);border-radius:4px}
 .option-copy{min-width:0;display:flex;gap:6px;align-items:baseline}
 .option-copy>b{flex:0 0 auto}
-.option-copy span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#111827}
-.bar{height:9px;background:rgba(17,24,39,.2);border-radius:9px;overflow:hidden}
+.option-copy span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--jev-text,#111827)}
+.bar{height:9px;background:var(--jev-bar,rgba(17,24,39,.2));border-radius:9px;overflow:hidden}
 .bar i{display:block;height:100%;background:linear-gradient(90deg,#16a34a,#2563eb)}
-small{color:#111827}
+small{color:var(--jev-muted,var(--jev-text,#111827))}
 .warning,.error{margin:10px 0;padding:9px;border-radius:8px;background:rgba(255,255,255,.82);color:#111827;border:1px solid rgba(17,24,39,.25)}
 .error{background:rgba(255,255,255,.9)}
 .actions{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}
@@ -199,3 +269,59 @@ button{cursor:pointer;border:1px solid rgba(17,24,39,.38);background:rgba(255,25
 @keyframes s{to{transform:rotate(360deg)}}
 #explanation{white-space:pre-wrap;margin-top:12px;color:#111827}
 `;
+
+function parseCssColor(value: string): RgbaColor | undefined {
+  const text = value.trim().toLowerCase();
+  if (!text || text === "transparent") return undefined;
+  if (text.startsWith("#")) {
+    const hex = text.slice(1);
+    if (![3, 4, 6, 8].includes(hex.length) || !/^[0-9a-f]+$/i.test(hex)) return undefined;
+    const expanded = hex.length <= 4 ? [...hex].map((part) => part + part).join("") : hex;
+    const hasAlpha = expanded.length === 8;
+    return {
+      r: Number.parseInt(expanded.slice(0, 2), 16),
+      g: Number.parseInt(expanded.slice(2, 4), 16),
+      b: Number.parseInt(expanded.slice(4, 6), 16),
+      a: hasAlpha ? Number.parseInt(expanded.slice(6, 8), 16) / 255 : 1
+    };
+  }
+  const match = text.match(/^rgba?\((.*)\)$/);
+  if (!match) return undefined;
+  const parts = match[1].replace("/", " ").split(/[\s,]+/).filter(Boolean);
+  if (parts.length < 3) return undefined;
+  const channel = (part: string) => {
+    const parsed = Number.parseFloat(part);
+    if (!Number.isFinite(parsed)) return undefined;
+    return Math.max(0, Math.min(255, part.endsWith("%") ? parsed * 2.55 : parsed));
+  };
+  const r = channel(parts[0]);
+  const g = channel(parts[1]);
+  const b = channel(parts[2]);
+  if (r == null || g == null || b == null) return undefined;
+  const alphaValue = parts[3] == null ? 1 : Number.parseFloat(parts[3].replace("%", ""));
+  if (!Number.isFinite(alphaValue)) return undefined;
+  return { r, g, b, a: Math.max(0, Math.min(1, parts[3]?.endsWith("%") ? alphaValue / 100 : alphaValue)) };
+}
+
+function backgroundLuminance(element: Element): number | undefined {
+  let current: Element | null = element;
+  while (current) {
+    const background = parseCssColor(getComputedStyle(current).backgroundColor);
+    if (background && background.a > 0.04) {
+      const r = background.r * background.a + 255 * (1 - background.a);
+      const g = background.g * background.a + 255 * (1 - background.a);
+      const b = background.b * background.a + 255 * (1 - background.a);
+      return relativeLuminance(r, g, b);
+    }
+    current = current.parentElement;
+  }
+  return undefined;
+}
+
+function relativeLuminance(r: number, g: number, b: number) {
+  const channel = (value: number) => {
+    const normalized = value / 255;
+    return normalized <= 0.03928 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+}

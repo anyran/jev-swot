@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ResultOverlay, summarizeAnswer } from "./overlay";
+import { overlayPaletteForLuminance, ResultOverlay, summarizeAnswer } from "./overlay";
 import type { ExtractedQuestion, ProbabilityResult } from "../shared/types";
 
 const question: ExtractedQuestion = {
@@ -15,6 +15,17 @@ function shadow(overlay: ResultOverlay): ShadowRoot { return (overlay as unknown
 function close(overlay: ResultOverlay) { shadow(overlay).querySelector<HTMLElement>('[data-action="close"]')?.click(); }
 
 describe("compact answer summary", () => {
+  it("uses a subtle dark palette on light pages and a light palette on dark pages", () => {
+    expect(overlayPaletteForLuminance(0.9)).toMatchObject({
+      text: "rgba(17,24,39,.52)",
+      strong: "rgba(0,0,0,.66)"
+    });
+    expect(overlayPaletteForLuminance(0.08)).toMatchObject({
+      text: "rgba(255,255,255,.58)",
+      strong: "rgba(255,255,255,.78)"
+    });
+  });
+
   it("shows the highest-probability single answer", () => {
     const probability: ProbabilityResult = {
       mode: "single-distribution",
@@ -91,6 +102,15 @@ describe("compact answer summary", () => {
     expect(shadow(overlay).querySelector(".answer-compact")?.textContent).toBe("答案B");
     shadow(overlay).querySelector<HTMLElement>('[data-action="toggle-details"]')?.click();
     expect(shadow(overlay).querySelector('[data-action="direct-answer"]')).not.toBeNull();
+    close(overlay);
+  });
+
+  it("attaches adaptive palette variables to the compact overlay", () => {
+    const overlay = new ResultOverlay(vi.fn(), vi.fn(), vi.fn(), vi.fn());
+    overlay.show({ ok: true, question, probability: { mode: "single-distribution", options: [{ id: "option_1", label: "A", probability: 0.1 }, { id: "option_2", label: "B", probability: 0.9 }], confidence: 0.9, model: "jev-test" } });
+    const section = shadow(overlay).querySelector("section");
+    expect(section?.getAttribute("style")).toContain("--jev-text:");
+    expect(section?.getAttribute("style")).toContain("--jev-shadow:");
     close(overlay);
   });
 
