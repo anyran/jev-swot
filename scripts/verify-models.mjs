@@ -14,4 +14,8 @@ for (const [name, metadata] of Object.entries(manifest.files)) {
     } else console.log(`${name}: ok`);
   } catch { console.error(`${name}: missing`); failed = true; }
 }
+try {
+  const dictionary = (await readFile(new URL("ppocrv5-dict.txt", root), "utf8")).split(/\r?\n/).filter(Boolean);
+  if (dictionary.length !== 18_383) { console.error(`ppocrv5-dict.txt: expected 18383 entries, got ${dictionary.length}`); failed = true; }
+} catch { /* missing file is already reported above */ }
 if (failed) process.exitCode = 1;
