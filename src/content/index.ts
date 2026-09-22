@@ -58,11 +58,10 @@ document.addEventListener("dblclick", (event) => {
   event.preventDefault(); event.stopPropagation();
   void whenSiteEnabled(() => {
     const target = event.target instanceof Element ? event.target : document.body;
-    // Alt + double-click is an explicit user gesture; allow a best-effort
-    // screenshot fallback for image/canvas questions. Chrome may still require
-    // the extension command/action to grant activeTab, in which case the
-    // background returns a recoverable message telling the user to use the
-    // selection shortcut.
+    // Alt + double-click is a DOM-only gesture. If the question needs a
+    // screenshot, the background returns a recoverable message telling the
+    // user to use the selection shortcut, which grants temporary activeTab
+    // capture permission.
     // Alt + double-click can analyze complete DOM questions, but it does not
     // grant the temporary screenshot permission required by a visual fallback.
     // The user must use the selection shortcut when a screenshot is needed.
