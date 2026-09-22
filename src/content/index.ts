@@ -52,7 +52,10 @@ chrome.runtime.onMessage.addListener((message: { type?: string } | RuntimeProgre
   if (message.type === "ANALYZE_PROGRESS" && "requestId" in message && message.requestId === activeRequestId) overlay.progress(message.message);
 });
 document.addEventListener("dblclick", (event) => {
-  if (!event.altKey || isEditable(event.target) || isExtensionNode(event.target) || disabledForSite === true) return;
+  // Do not intercept while the disabled-site setting is still loading.  A
+  // sensitive site must remain untouched unless we have confirmed it is
+  // enabled for this extension.
+  if (!event.altKey || isEditable(event.target) || isExtensionNode(event.target) || disabledForSite !== false) return;
   // Cancel the page's double-click action synchronously; the settings check
   // below may need to await storage, which is too late for preventDefault.
   event.preventDefault(); event.stopPropagation();
