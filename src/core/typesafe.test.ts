@@ -37,6 +37,10 @@ describe("JEV request mapping", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ model: "jev-test", answers: { answer: { type: "choice", probabilities: { option_1: .8 }, confidence: .8 } } }), { status: 200 })));
     await expect(askJev(base, "secret")).rejects.toThrow("未覆盖全部选项");
   });
+  it("rejects a non-Choice answer that happens to contain probabilities", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ model: "jev-test", answers: { answer: { type: "noul", probabilities: { option_1: .8, option_2: .2 }, confidence: .8 } } }), { status: 200 })));
+    await expect(askJev(base, "secret")).rejects.toThrow("缺少 Choice 概率");
+  });
   it("rejects missing independent Noul results", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ model: "jev-test", answers: { option_1: { type: "noul", noul: .8 } } }), { status: 200 })));
     await expect(askJev({ ...base, questionType: "multiple" }, "secret")).rejects.toThrow("缺少选项 B 的 Noul");
