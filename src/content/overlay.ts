@@ -100,10 +100,15 @@ export class ResultOverlay {
   explanation(text: string) { const node = this.root.querySelector("#explanation"); if (node) node.textContent = text; }
   explanationChunk(text: string) { const node = this.root.querySelector("#explanation"); if (node) node.textContent += text; }
   private compact() {
-    if (this.directResult) return `<div class="answer-compact"><span>答案</span><strong>${escapeHtml(this.directResult.answerLabels.join("、"))}</strong></div>`;
+    if (this.directResult) {
+      const answer = escapeHtml(this.directResult.answerLabels.join("、"));
+      return `<div class="answer-compact" aria-label="答案 ${answer}"><strong>${answer}</strong></div>`;
+    }
     const probability = this.probability; if (!probability) return "";
     const summary = summarizeAnswer(probability);
-    return `<div class="answer-compact"><span>${summary.uncertain ? "倾向" : "答案"}</span><strong>${escapeHtml(summary.label)}</strong></div>`;
+    const answer = escapeHtml(summary.label);
+    const accessibleLabel = summary.uncertain ? `不确定，倾向 ${answer}` : `答案 ${answer}`;
+    return `<div class="answer-compact" aria-label="${accessibleLabel}"><strong>${answer}</strong></div>`;
   }
   private details() {
     if (this.directResult) return this.directDetails();
@@ -236,8 +241,7 @@ header{display:flex;justify-content:space-between;align-items:center;gap:8px;pad
 header span{display:flex;gap:4px}
 header button{background:transparent;border:0;color:var(--jev-text,#111827);font-size:12px;padding:2px 5px;text-shadow:inherit}
 main{padding:10px}
-.answer-compact{display:flex;align-items:baseline;gap:5px;white-space:nowrap;overflow:hidden;color:var(--jev-text,#111827)}
-.answer-compact span{color:var(--jev-muted,var(--jev-text,#111827));font-size:11px}
+.answer-compact{display:flex;align-items:baseline;white-space:nowrap;overflow:hidden;color:var(--jev-text,#111827)}
 .answer-compact strong{color:var(--jev-strong,#000);font-size:18px;line-height:1.1;overflow:hidden;text-overflow:ellipsis}
 .answer-compact small{color:var(--jev-muted,var(--jev-text,#111827))}
 .row{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(48px,1fr) 52px;gap:8px;align-items:center;margin:9px 0}
