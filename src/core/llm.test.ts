@@ -45,6 +45,14 @@ describe("OpenAI-compatible structured output", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("content type image_url is unsupported", { status: 415 })));
     await expect(recognizeWithVision("data:image/png;base64,AA==", settings, "secret")).rejects.toMatchObject({ unsupportedVision: true, retryable: false });
   });
+  it("keeps a transient vision 429 retryable instead of marking the model unsupported", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("busy", { status: 429 })));
+    await expect(recognizeWithVision("data:image/png;base64,AA==", settings, "secret")).rejects.toMatchObject({ unsupportedVision: false, retryable: true, status: 429 });
+  });
+  it("keeps network failures retryable for the vision fallback path", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("offline"); }));
+    await expect(recognizeWithVision("data:image/png;base64,AA==", settings, "secret")).rejects.toMatchObject({ unsupportedVision: false, retryable: true });
+  });
   it("does not retry when the caller already cancelled", async () => {
     const controller = new AbortController(); controller.abort();
     const fetchMock = vi.fn(); vi.stubGlobal("fetch", fetchMock);

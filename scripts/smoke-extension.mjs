@@ -14,7 +14,7 @@ try {
   browser = await puppeteer.launch({ executablePath, headless: true, userDataDir, enableExtensions: [extensionPath], args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-crash-reporter"] });
   const target = await browser.waitForTarget((item) => item.type() === "service_worker" && item.url().includes("assets/background.js"), { timeout: 15_000 });
   const extensionId = new URL(target.url()).host;
-  const workerSession = await target.createCDPSession(); let jevRequests = 0, llmRequests = 0, visionRequests = 0;
+  const workerSession = await target.createCDPSession(); let jevRequests = 0, llmRequests = 0, visionRequests = 0, forceVisionUnsupported = false;
   await workerSession.send("Fetch.enable", { patterns: [{ urlPattern: "https://api.typesafe.ai/*", requestStage: "Request" }, { urlPattern: "https://api.openai.com/*", requestStage: "Request" }] });
   workerSession.on("Fetch.requestPaused", (event) => {
     if (event.request.url.startsWith("https://api.typesafe.ai/")) {
@@ -30,6 +30,10 @@ try {
     if (event.request.url.startsWith("https://api.openai.com/")) {
       llmRequests++;
       if (event.request.postData?.includes("image_url")) visionRequests++;
+      if (forceVisionUnsupported && event.request.postData?.includes("image_url")) {
+        void workerSession.send("Fetch.fulfillRequest", { requestId: event.requestId, responseCode: 400, responseHeaders: [{ name: "content-type", value: "text/plain" }], body: Buffer.from("image_url is not supported").toString("base64") });
+        return;
+      }
       if (event.request.postData?.includes('"stream":true')) {
         const stream = 'data: {"choices":[{"delta":{"content":"答案是 B"}}]}\n\ndata: [DONE]\n\n';
         void workerSession.send("Fetch.fulfillRequest", { requestId: event.requestId, responseCode: 200, responseHeaders: [{ name: "content-type", value: "text/event-stream" }], body: Buffer.from(stream).toString("base64") });
@@ -76,6 +80,16 @@ try {
   if (!fallback?.ok || !fallback.probability) throw new Error(`OCR fallback smoke returned an invalid response: ${JSON.stringify(fallback)}`);
   if (llmRequests === 0 || jevRequests < 2) throw new Error(`OCR fallback smoke request chain was not observed (llm=${llmRequests}, vision=${visionRequests}, jev=${jevRequests})`);
   if (visionRequests !== 0) throw new Error("Canvas OCR smoke unexpectedly uploaded an image to the vision model");
+  forceVisionUnsupported = true;
+  await page.evaluate(() => chrome.storage.local.set({ settings: { llm: { baseUrl: "https://api.openai.com/v1", model: "smoke-model", vision: "auto", structuredOutput: "unsupported" }, ocrThreshold: 0.5, useWebGpu: false, confirmVisionUpload: true, disabledHosts: [] } }));
+  const visionFallback = await page.evaluate(async () => {
+    const canvas = document.createElement("canvas"); canvas.width = 900; canvas.height = 340;
+    const context = canvas.getContext("2d"); context.fillStyle = "white"; context.fillRect(0, 0, canvas.width, canvas.height); context.fillStyle = "black"; context.font = "42px Arial";
+    ["Which number is even?", "A. 3", "B. 4"].forEach((line, index) => context.fillText(line, 40, 75 + index * 90));
+    return chrome.runtime.sendMessage({ type: "ANALYZE", requestId: crypto.randomUUID(), question: { source: "dom", questionType: "unknown", stem: "", options: [], sourceRect: { x: 0, y: 0, width: canvas.width, height: canvas.height }, recognitionConfidence: 0.2, warnings: ["INCOMPLETE_OPTIONS"] }, screenshot: canvas.toDataURL("image/png"), devicePixelRatio: 1, visionConsent: "allow", captureAuthorized: true });
+  });
+  if (!visionFallback?.ok || !visionFallback.probability) throw new Error(`Vision 400 fallback smoke returned an invalid response: ${JSON.stringify(visionFallback)}`);
+  if (visionRequests !== 1) throw new Error(`Vision capability fallback was not exercised exactly once (vision=${visionRequests})`);
   const explanation = await page.evaluate(() => new Promise((resolve, reject) => {
     const port = chrome.runtime.connect({ name: "jev-swot-explanation" }); let text = "";
     const timeout = setTimeout(() => { port.disconnect(); reject(new Error("streaming explanation timed out")); }, 10_000);
