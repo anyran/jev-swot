@@ -1,5 +1,5 @@
 import { askJev } from "../core/typesafe";
-import { explainAnswer, recognizeWithVision, structureOcrText } from "../core/llm";
+import { LlmError, explainAnswer, recognizeWithVision, structureOcrText } from "../core/llm";
 import { parseQuestionText, stableOptionId, validateQuestion } from "../core/question";
 import { getSecrets, getSettings, setSecrets } from "../shared/storage";
 import type { ExtractedQuestion, WorkerRequest, WorkerResponse } from "../shared/types";
@@ -19,6 +19,10 @@ chrome.runtime.onMessage.addListener((request: WorkerRequest, sender, sendRespon
 
 async function handle(request: Exclude<WorkerRequest, { type: "OCR" | "CROP_IMAGE" }>, sender: chrome.runtime.MessageSender): Promise<WorkerResponse> {
   if (request.type === "CLEAR_SESSION") { await chrome.storage.session.clear(); return { ok: true }; }
+  if (request.type === "RELEASE_OCR") {
+    if (await chrome.offscreen.hasDocument()) await chrome.offscreen.closeDocument();
+    return { ok: true };
+  }
   const settings = await getSettings();
   const secrets = await getSecrets();
   if (request.type === "EXPLAIN") {
@@ -50,7 +54,12 @@ async function recognizeFallback(base: ExtractedQuestion, screenshot: string, de
   const questionImage = cropped.imageDataUrl as string;
   if (secrets.llmApiKey && settings.llm.vision !== "unsupported" && secrets.visionDetected !== "unsupported") {
     try {
-      const parsed = await recognizeWithVision(questionImage, settings.llm, secrets.llmApiKey);
+      let parsed: Partial<ExtractedQuestion>;
+      try { parsed = await recognizeWithVision(questionImage, settings.llm, secrets.llmApiKey); }
+      catch (error) {
+        if (!(error instanceof LlmError) || !error.retryable) throw error;
+        parsed = await recognizeWithVision(questionImage, settings.llm, secrets.llmApiKey);
+      }
       return normalizeParsed(parsed, base, "vision", 0.9);
     } catch (error) {
       if ((error as Error & { unsupportedVision?: boolean }).unsupportedVision) await setSecrets({ ...secrets, visionDetected: "unsupported" });

@@ -5,6 +5,7 @@ export class ResultOverlay {
   private root: ShadowRoot;
   private question?: ExtractedQuestion;
   private probability?: ProbabilityResult;
+  private position = { left: 16, top: 16 };
   constructor(private retry: (q: ExtractedQuestion) => void, private explain: (q: ExtractedQuestion, p: ProbabilityResult) => void) {
     this.host.dataset.jevanswerRoot = "true";
     this.root = this.host.attachShadow({ mode: "closed" });
@@ -28,12 +29,30 @@ export class ResultOverlay {
     return `<div class="editor"><label>题型<select id="type"><option value="single" ${q.questionType === "single" ? "selected" : ""}>单选</option><option value="multiple" ${q.questionType === "multiple" ? "selected" : ""}>多选</option></select></label><label>题干<textarea id="stem">${escapeHtml(q.stem)}</textarea></label><label>选项（每行一个）<textarea id="options">${q.options.map((x) => `${x.label}. ${x.text}`).join("\n")}</textarea></label><button class="primary" data-action="retry">重新判断</button></div>`;
   }
   private render(content: string) {
-    this.root.innerHTML = `<style>${CSS_TEXT}</style><section><header><b>JevAnswer</b><span><button data-action="collapse">—</button><button data-action="close">×</button></span></header><main>${content}</main></section>`;
+    this.root.innerHTML = `<style>${CSS_TEXT}</style><section style="left:${this.position.left}px;top:${this.position.top}px"><header><b>JevAnswer</b><span><button data-action="collapse">—</button><button data-action="close">×</button></span></header><main>${content}</main></section>`;
     this.root.querySelector('[data-action="close"]')?.addEventListener("click", () => this.host.remove());
     this.root.querySelector('[data-action="collapse"]')?.addEventListener("click", () => this.root.querySelector("main")?.classList.toggle("hidden"));
     this.root.querySelector('[data-action="edit"]')?.addEventListener("click", () => this.render(this.editor()));
     this.root.querySelector('[data-action="explain"]')?.addEventListener("click", () => { if (this.question && this.probability) { this.explanation("正在生成解析…"); this.explain(this.question, this.probability); } });
     this.root.querySelector('[data-action="retry"]')?.addEventListener("click", () => this.submitEdit());
+    this.bindDragging();
+  }
+  private bindDragging() {
+    const section = this.root.querySelector("section") as HTMLElement | null;
+    const header = this.root.querySelector("header") as HTMLElement | null;
+    if (!section || !header) return;
+    header.addEventListener("pointerdown", (event) => {
+      if ((event.target as Element).closest("button")) return;
+      const bounds = section.getBoundingClientRect(), dx = event.clientX - bounds.left, dy = event.clientY - bounds.top;
+      header.setPointerCapture(event.pointerId);
+      const move = (next: PointerEvent) => {
+        this.position.left = Math.max(0, Math.min(innerWidth - section.offsetWidth, next.clientX - dx));
+        this.position.top = Math.max(0, Math.min(innerHeight - 40, next.clientY - dy));
+        section.style.left = `${this.position.left}px`; section.style.top = `${this.position.top}px`;
+      };
+      header.addEventListener("pointermove", move);
+      header.addEventListener("pointerup", () => header.removeEventListener("pointermove", move), { once: true });
+    });
   }
   private submitEdit() {
     if (!this.question) return;

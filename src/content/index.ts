@@ -6,6 +6,7 @@ let selecting = false;
 let selectionBox: HTMLDivElement | null = null;
 let start = { x: 0, y: 0 };
 const overlay = new ResultOverlay(analyze, explain);
+let analysisSequence = 0;
 
 chrome.runtime.onMessage.addListener((message) => { if (message.type === "START_SELECTION") startSelection(); });
 document.addEventListener("dblclick", (event) => {
@@ -35,6 +36,6 @@ function up(event: PointerEvent) {
 }
 function cancelOnEscape(event: KeyboardEvent) { if (event.key === "Escape") cleanup(); }
 function cleanup() { selecting = false; selectionBox?.remove(); selectionBox = null; document.documentElement.style.cursor = ""; document.removeEventListener("pointerdown", down, true); document.removeEventListener("pointermove", move, true); document.removeEventListener("pointerup", up, true); document.removeEventListener("keydown", cancelOnEscape, true); }
-async function analyze(question: ExtractedQuestion) { overlay.loading(question); const response = await chrome.runtime.sendMessage({ type: "ANALYZE", question, devicePixelRatio: window.devicePixelRatio }) as WorkerResponse; overlay.show(response); }
+async function analyze(question: ExtractedQuestion) { const sequence = ++analysisSequence; overlay.loading(question); const response = await chrome.runtime.sendMessage({ type: "ANALYZE", question, devicePixelRatio: window.devicePixelRatio }) as WorkerResponse; if (sequence === analysisSequence) overlay.show(response); }
 async function explain(question: ExtractedQuestion, probability: ProbabilityResult) { const response = await chrome.runtime.sendMessage({ type: "EXPLAIN", question, probability }) as WorkerResponse; overlay.explanation(response.ok ? response.explanation ?? "没有解析" : response.message); }
 function isEditable(target: EventTarget | null) { return target instanceof Element && !!target.closest("input,textarea,select,[contenteditable=true]"); }

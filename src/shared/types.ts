@@ -45,6 +45,7 @@ export type WorkerRequest =
   | { type: "EXPLAIN"; question: ExtractedQuestion; probability: ProbabilityResult }
   | { type: "OCR"; imageDataUrl: string; rect: DOMRectLike; devicePixelRatio: number; useWebGpu?: boolean }
   | { type: "CROP_IMAGE"; imageDataUrl: string; rect: DOMRectLike; devicePixelRatio: number }
+  | { type: "RELEASE_OCR" }
   | { type: "CLEAR_SESSION" };
 
 export type WorkerResponse =
