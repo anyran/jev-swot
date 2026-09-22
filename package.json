@@ -1,0 +1,29 @@
+{
+  "name": "jevanswer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "tsc -b --pretty false",
+    "verify:models": "node scripts/verify-models.mjs"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "latest",
+    "onnxruntime-web": "latest",
+    "react": "latest",
+    "react-dom": "latest"
+  },
+  "devDependencies": {
+    "@types/chrome": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "jsdom": "latest",
+    "typescript": "latest",
+    "vite": "latest",
+    "vitest": "latest"
+  }
+}

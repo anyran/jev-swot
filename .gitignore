@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.log
+*.tsbuildinfo
+.DS_Store
+@eaDir/
+public/models/*.onnx
+public/models/ppocrv5-dict.txt
