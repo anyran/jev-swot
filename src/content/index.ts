@@ -45,7 +45,8 @@ let disabledForSite: boolean | undefined;
 let disabledStateReady = refreshDisabledState();
 chrome.storage.onChanged.addListener((changes, areaName) => { if (areaName === "local" && changes.settings) disabledStateReady = refreshDisabledState(); });
 
-chrome.runtime.onMessage.addListener((message: { type?: string } | RuntimeProgressMessage) => {
+chrome.runtime.onMessage.addListener((message: { type?: string } | RuntimeProgressMessage, _sender, sendResponse) => {
+  if (message.type === "PING") { sendResponse({ ok: true }); return false; }
   if (message.type === "START_SELECTION") {
     void whenSiteEnabled(() => { selectionCaptureAuthorized = true; startSelection(); });
   }

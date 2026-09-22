@@ -7,11 +7,27 @@ import type { ExtractedQuestion, RecognitionPreview, WorkerRequest, WorkerRespon
 const activeRequests = new Map<string, AbortController>();
 
 chrome.commands.onCommand.addListener(async (command, tab) => {
-  if (command === "select-question" && tab?.id) await chrome.tabs.sendMessage(tab.id, { type: "START_SELECTION" }).catch(() => undefined);
+  if (command === "select-question" && tab?.id) await startSelection(tab);
 });
 chrome.action.onClicked.addListener(async (tab) => {
-  if (tab.id) await chrome.tabs.sendMessage(tab.id, { type: "START_SELECTION" }).catch(() => undefined);
+  if (tab.id) await startSelection(tab);
 });
+
+async function startSelection(tab: chrome.tabs.Tab): Promise<void> {
+  if (tab.id == null) return;
+  try {
+    const ready = await chrome.tabs.sendMessage(tab.id, { type: "PING" });
+    if (ready?.ok) { await chrome.tabs.sendMessage(tab.id, { type: "START_SELECTION" }); return; }
+  } catch {
+    // Tabs opened before installation may not have the static content script.
+  }
+  try {
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["assets/content.js"] });
+    await chrome.tabs.sendMessage(tab.id, { type: "START_SELECTION" });
+  } catch {
+    // Chrome internal and other restricted pages reject injection.
+  }
+}
 
 chrome.runtime.onMessage.addListener((request: WorkerRequest, sender, sendResponse) => {
   if (request.type === "OCR" || request.type === "CROP_IMAGE" || request.type === "CANCEL_OCR") return false;
