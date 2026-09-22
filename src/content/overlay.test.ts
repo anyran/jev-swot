@@ -38,6 +38,14 @@ describe("compact answer summary", () => {
     expect(summarizeAnswer(probability)).toMatchObject({ label: "A", uncertain: true, detail: "55%" });
   });
 
+  it("stays conservative when the provider omits confidence", () => {
+    expect(summarizeAnswer({
+      mode: "single-distribution",
+      options: [{ id: "option_1", label: "A", probability: 0.55 }, { id: "option_2", label: "B", probability: 0.45 }],
+      model: "jev-test"
+    })).toMatchObject({ label: "A", uncertain: true });
+  });
+
   it("does not present an empty single distribution as a confirmed answer", () => {
     expect(summarizeAnswer({ mode: "single-distribution", options: [], model: "jev-test" })).toEqual({ label: "待确认", uncertain: true, detail: "" });
   });

@@ -6,7 +6,7 @@ export function summarizeAnswer(probability: ProbabilityResult): AnswerSummary {
   const sorted = [...probability.options].sort((a, b) => b.probability - a.probability);
   if (probability.mode === "single-distribution") {
     const top = sorted[0];
-    return { label: top?.label ?? "待确认", uncertain: !top || (probability.confidence != null && probability.confidence < 0.6), detail: top ? `${(top.probability * 100).toFixed(0)}%` : "" };
+    return { label: top?.label ?? "待确认", uncertain: !top || top.probability < 0.6 || (probability.confidence != null && probability.confidence < 0.6), detail: top ? `${(top.probability * 100).toFixed(0)}%` : "" };
   }
   const selected = sorted.filter((option) => option.probability >= 0.5);
   const visible = selected.length ? selected : sorted.slice(0, 2);
