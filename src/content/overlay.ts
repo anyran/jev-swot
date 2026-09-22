@@ -43,7 +43,7 @@ export class ResultOverlay {
   private render(content: string) {
     if (!this.host.isConnected) document.documentElement.append(this.host);
     this.root.innerHTML = `<style>${CSS_TEXT}</style><section style="left:${this.position.left}px;top:${this.position.top}px"><header><b>Jev 做题家</b><small>Jev SWOT</small><span><button data-action="collapse">—</button><button data-action="close">×</button></span></header><main>${content}</main></section>`;
-    this.root.querySelector('[data-action="close"]')?.addEventListener("click", () => { this.cancel(); this.host.remove(); });
+    this.root.querySelector('[data-action="close"]')?.addEventListener("click", () => { this.cancel(); this.question = undefined; this.probability = undefined; this.preview = undefined; this.host.remove(); });
     this.root.querySelector('[data-action="cancel"]')?.addEventListener("click", () => { this.cancel(); this.render(`<div class="warning">已取消当前请求。</div>${this.editor()}`); });
     this.root.querySelector('[data-action="collapse"]')?.addEventListener("click", () => this.root.querySelector("main")?.classList.toggle("hidden"));
     this.root.querySelector('[data-action="edit"]')?.addEventListener("click", () => this.render(this.editor()));
