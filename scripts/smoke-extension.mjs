@@ -69,6 +69,21 @@ try {
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address(); if (!address || typeof address === "string") throw new Error("Failed to start smoke page");
   const questionPage = await browser.newPage(); await questionPage.goto(`http://127.0.0.1:${address.port}/`, { waitUntil: "networkidle0" });
+  await page.evaluate(async () => {
+    const stored = await chrome.storage.local.get("settings");
+    await chrome.storage.local.set({ settings: { ...(stored.settings ?? {}), disabledHosts: ["127.0.0.1"] } });
+  });
+  await questionPage.reload({ waitUntil: "networkidle0" });
+  const requestsBeforeDisabledSite = jevRequests;
+  await questionPage.$eval("#choice-a", (element) => element.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, altKey: true })));
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  if (await questionPage.$('[data-jev-swot-root="true"]')) throw new Error("Disabled site still displayed an analysis overlay");
+  if (jevRequests !== requestsBeforeDisabledSite) throw new Error("Disabled site still sent a JEV request");
+  await page.evaluate(async () => {
+    const stored = await chrome.storage.local.get("settings");
+    await chrome.storage.local.set({ settings: { ...(stored.settings ?? {}), disabledHosts: [] } });
+  });
+  await questionPage.reload({ waitUntil: "networkidle0" });
   await questionPage.$eval("#choice-a", (element) => element.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, altKey: true })));
   await questionPage.waitForSelector('[data-jev-swot-root="true"]', { timeout: 5_000 });
   await new Promise((resolve, reject) => { const deadline = Date.now() + 5_000; const poll = () => jevRequests ? resolve() : Date.now() > deadline ? reject(new Error("Mock JEV request was not observed")) : setTimeout(poll, 50); poll(); });
@@ -151,6 +166,9 @@ try {
     port.postMessage({ question: { source: "user-edited", questionType: "single", stem: "Which number is even?", options: [{ id: "option_1", label: "A", text: "3" }, { id: "option_2", label: "B", text: "4" }], sourceRect: { x: 0, y: 0, width: 1, height: 1 }, recognitionConfidence: 1, warnings: [] }, probability: { mode: "single-distribution", options: [{ id: "option_1", label: "A", probability: 0.08 }, { id: "option_2", label: "B", probability: 0.92 }], confidence: 0.92, model: "jev-smoke" } });
   }));
   if (explanation !== "答案是 B") throw new Error(`Streaming explanation smoke returned ${JSON.stringify(explanation)}`);
+  await page.evaluate(() => chrome.runtime.sendMessage({ type: "CLEAR_SESSION" }));
+  const remainingSession = await page.evaluate(() => chrome.storage.session.get(null));
+  if (Object.keys(remainingSession).length !== 0) throw new Error(`Session secrets were not cleared: ${Object.keys(remainingSession).join(", ")}`);
   console.log(`Chrome loaded Jev 做题家（Jev SWOT） ${extensionId}; DOM→JEV, Canvas→local OCR→text model→JEV, and streaming explanation flows are healthy (${Math.round(ocr.confidence * 100)}%, ${ocr.backend}).`);
 } finally {
   await browser?.close();
