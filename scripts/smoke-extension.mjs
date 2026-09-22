@@ -14,11 +14,14 @@ try {
   browser = await puppeteer.launch({ executablePath, headless: true, userDataDir, enableExtensions: [extensionPath], args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-crash-reporter"] });
   const target = await browser.waitForTarget((item) => item.type() === "service_worker" && item.url().includes("assets/background.js"), { timeout: 15_000 });
   const extensionId = new URL(target.url()).host;
-  const workerSession = await target.createCDPSession(); let jevRequests = 0, llmRequests = 0, visionRequests = 0, forceVisionUnsupported = false;
+  const workerSession = await target.createCDPSession(); let jevRequests = 0, llmRequests = 0, visionRequests = 0, forceVisionUnsupported = false, jevInputWasClean = false;
   await workerSession.send("Fetch.enable", { patterns: [{ urlPattern: "https://api.typesafe.ai/*", requestStage: "Request" }, { urlPattern: "https://api.openai.com/*", requestStage: "Request" }] });
   workerSession.on("Fetch.requestPaused", (event) => {
     if (event.request.url.startsWith("https://api.typesafe.ai/")) {
       jevRequests++;
+      const requestBody = event.request.postData ?? "";
+      if (requestBody.includes("Correct answer:") || requestBody.includes("Explanation:")) jevInputWasClean = false;
+      else if (requestBody.includes("Which number is even?")) jevInputWasClean = true;
       void workerSession.send("Fetch.fulfillRequest", {
         requestId: event.requestId,
         responseCode: 200,
@@ -39,7 +42,7 @@ try {
         void workerSession.send("Fetch.fulfillRequest", { requestId: event.requestId, responseCode: 200, responseHeaders: [{ name: "content-type", value: "text/event-stream" }], body: Buffer.from(stream).toString("base64") });
         return;
       }
-      const structured = { questionType: "single", stem: "Which number is even?", context: "", visualDependency: false, visualDependencyReason: "", ignoredText: "", options: [{ label: "A", text: "3" }, { label: "B", text: "4" }] };
+      const structured = { questionType: "single", stem: "Which number is even?", context: "", visualDependency: false, visualDependencyReason: "", ignoredText: "Correct answer: B\nExplanation: even numbers are divisible by two", options: [{ label: "A", text: "3" }, { label: "B", text: "4" }] };
       void workerSession.send("Fetch.fulfillRequest", { requestId: event.requestId, responseCode: 200, responseHeaders: [{ name: "content-type", value: "application/json" }], body: Buffer.from(JSON.stringify({ choices: [{ message: { content: JSON.stringify(structured) } }] })).toString("base64") });
     }
   });
@@ -78,6 +81,7 @@ try {
     return chrome.runtime.sendMessage({ type: "ANALYZE", requestId: crypto.randomUUID(), question: { source: "dom", questionType: "unknown", stem: "", options: [], sourceRect: { x: 0, y: 0, width: canvas.width, height: canvas.height }, recognitionConfidence: 0.2, warnings: ["INCOMPLETE_OPTIONS"] }, screenshot: canvas.toDataURL("image/png"), devicePixelRatio: 1, captureAuthorized: true });
   });
   if (!fallback?.ok || !fallback.probability) throw new Error(`OCR fallback smoke returned an invalid response: ${JSON.stringify(fallback)}`);
+  if (!jevInputWasClean) throw new Error("OCR structure model's excluded answer/explanation text reached the JEV request");
   if (llmRequests === 0 || jevRequests < 2) throw new Error(`OCR fallback smoke request chain was not observed (llm=${llmRequests}, vision=${visionRequests}, jev=${jevRequests})`);
   if (visionRequests !== 0) throw new Error("Canvas OCR smoke unexpectedly uploaded an image to the vision model");
   await page.evaluate(() => chrome.storage.session.set({ secrets: { typeSafeApiKey: "smoke-only" } }));
