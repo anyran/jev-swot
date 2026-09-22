@@ -4,7 +4,7 @@
 
 - [x] `npm ci`（锁文件安装）
 - [x] 固定 revision 的模型资产通过 `npm run verify:models` SHA-256 校验
-- [x] `npm run release`（类型检查、完整单元测试、模型、构建、Chrome 冒烟及 ZIP）
+- [x] `npm run release`（类型检查、完整单元测试、模型、构建、Chrome 冒烟及 ZIP；构建本身也会拒绝缺失或哈希错误的模型）
 - [x] 生产目录作为未打包扩展加载并实际运行 PP-OCRv5
 - [x] Chrome 冒烟覆盖多题页面 Alt+双击 DOM→JEV、截图→本地 OCR→普通文本结构化→JEV、流式答案解析，并确认无视觉模型上传
 - [x] Chrome 无 manifest、CSP 或 service worker 错误
