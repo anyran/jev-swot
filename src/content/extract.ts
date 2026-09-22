@@ -79,8 +79,9 @@ export function extractFromElement(element: Element): ExtractedQuestion {
   const imageContext = visualElements.map((image) => image.getAttribute("alt") || image.getAttribute("aria-label") || image.getAttribute("title") || "").map(cleanText).filter(Boolean).join("\n");
   const hasUnlabelledVisual = visualElements.some((image) => !cleanText(image.getAttribute("alt") || image.getAttribute("aria-label") || image.getAttribute("title") || ""));
   const hasRelevantVisual = visualElements.length > 0 && (VISUAL_CUE.test(`${allText}\n${imageContext}`) || hasUnlabelledVisual);
+  const hasFormulaMarkup = !!element.querySelector("math,msup,msub,sup,sub,[class*='katex' i],[class*='mathjax' i]");
   const warnings: RecognitionWarning[] = stem && options.length >= 2 ? [] : ["INCOMPLETE_OPTIONS"];
-  if (FORMULA_CUE.test(allText)) warnings.push("POSSIBLE_FORMULA");
+  if (FORMULA_CUE.test(allText) || hasFormulaMarkup) warnings.push("POSSIBLE_FORMULA");
   if (hasRelevantVisual) warnings.push("POSSIBLE_DIAGRAM", "VISION_MODEL_REQUIRED");
   return {
     source: "dom", questionType,

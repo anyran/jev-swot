@@ -65,6 +65,11 @@ describe("DOM extraction", () => {
     expect(question.warnings).toContain("POSSIBLE_FORMULA");
     expect(question.warnings).not.toContain("VISION_MODEL_REQUIRED");
   });
+  it("detects formula markup that has no plain-text operator", () => {
+    const element = document.querySelectorAll(".question")[0];
+    element.querySelector("h2")!.innerHTML = "x<sup>2</sup> 的值是？";
+    expect(extractFromElement(element).warnings).toContain("POSSIBLE_FORMULA");
+  });
   it("excludes common advertisement containers from DOM text", () => {
     const element = document.querySelectorAll(".question")[0];
     element.insertAdjacentHTML("afterbegin", '<div class="advertisement">hidden sponsored answer</div><div data-ad="true">another ad</div>');
