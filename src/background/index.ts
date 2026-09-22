@@ -219,7 +219,8 @@ async function recognizeFallback(base: ExtractedQuestion, screenshot: string, de
       excludedText = typeof structured.ignoredText === "string" ? structured.ignoredText.trim() : "";
       parsed = normalizeParsed(structured, parsed, "local-ocr", ocr.confidence);
       if (!hasStructuredQuestionFields(structured)) parsed.warnings.push("STRUCTURE_REVIEW_REQUIRED");
-    } catch {
+    } catch (error) {
+      if (signal.aborted) throw error;
       parsed.warnings.push("STRUCTURE_REVIEW_REQUIRED");
     }
   } else {
