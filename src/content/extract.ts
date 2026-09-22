@@ -21,8 +21,8 @@ export function findQuestionContainer(start: Element): Element {
     const lists = current.querySelectorAll("li,label").length;
     const images = current.querySelectorAll("img,canvas,svg").length;
     const rect = current.getBoundingClientRect();
-    const oversize = rect.height > innerHeight * 1.8 || text.length > 5000 ? 20 : 0;
-    const score = Math.min(text.length, 1000) / 100 + controls * 8 + Math.min(lists, 8) * 2 + images * 2 - depth - oversize;
+    const oversize = current === document.body || current === document.documentElement || rect.height > innerHeight * 1.8 || rect.width > innerWidth * 1.2 || text.length > 5000 ? 100 : 0;
+    const score = Math.min(text.length, 1000) / 100 + Math.min(controls, 8) * 8 + Math.min(lists, 8) * 2 + Math.min(images, 4) * 2 - depth - oversize;
     if (text.length >= 10 && score > bestScore) { best = current; bestScore = score; }
   }
   return best;
