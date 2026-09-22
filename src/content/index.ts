@@ -118,7 +118,7 @@ function directAnswer(question: ExtractedQuestion) {
 }
 function cancelActive() {
   analysisSequence++;
-  if (activeRequestId) { void chrome.runtime.sendMessage({ type: "CANCEL", requestId: activeRequestId }); activeRequestId = undefined; }
+  if (activeRequestId) { void chrome.runtime.sendMessage({ type: "CANCEL", requestId: activeRequestId }).catch(() => undefined); activeRequestId = undefined; }
   explanationPort?.disconnect(); explanationPort = undefined;
 }
 function isEditable(target: EventTarget | null) { return target instanceof Element && (!!target.closest("input,textarea,select,[contenteditable]:not([contenteditable=false])") || document.designMode === "on"); }
