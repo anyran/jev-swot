@@ -1,4 +1,3 @@
-import { stableOptionId } from "../core/question";
 import type { ExtractedQuestion, QuestionOption } from "../shared/types";
 
 const EXCLUDED = "script,style,noscript,nav,header,footer,[hidden],[aria-hidden='true'],[data-jevanswer-root]";
@@ -39,7 +38,7 @@ export function extractFromElement(element: Element): ExtractedQuestion {
   const options: QuestionOption[] = dedup.map((node, index) => {
     const raw = cleanText((node as HTMLElement).innerText || node.textContent || "");
     const match = /^\s*([A-Ha-h]|[1-9]|[①②③④⑤⑥⑦⑧⑨])[.、)）:]?\s*(.*)$/.exec(raw);
-    return { id: stableOptionId(index), label: match?.[1]?.toUpperCase() ?? String.fromCharCode(65 + index), text: match?.[2] || raw };
+    return { id: `option_${index + 1}`, label: match?.[1]?.toUpperCase() ?? String.fromCharCode(65 + index), text: match?.[2] || raw };
   }).filter((x) => x.text);
   const allText = cleanText(clone.innerText || clone.textContent || "");
   let stem = allText;

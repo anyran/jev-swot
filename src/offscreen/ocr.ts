@@ -46,15 +46,15 @@ export class PaddleOcr {
     const detTensor = imageTensor(detImage.data, detImage.width, detImage.height, "det");
     const detResult = await this.detector!.run({ [this.detector!.inputNames[0]]: detTensor });
     const output = detResult[this.detector!.outputNames[0]];
-    const boxes = probabilityBoxes(output.data as Float32Array, output.dims, crop.width / detImage.width, crop.height / detImage.height);
+    const boxes = probabilityBoxes(output.data as Float32Array, output.dims, crop.width / detImage.width, crop.height / detImage.height).sort((a, b) => b.confidence - a.confidence).slice(0, 64);
     const results: Array<Box & { text: string }> = [];
-    for (const box of boxes.slice(0, 128)) {
-      const line = cropRegion(crop, box);
-      const recImage = resizeForRecognition(line);
-      const tensor = imageTensor(recImage.data, recImage.width, recImage.height, "rec");
+    for (let offset = 0; offset < boxes.length; offset += 8) {
+      const batchBoxes = boxes.slice(offset, offset + 8), lines = batchBoxes.map((box) => resizeForRecognition(cropRegion(crop, box)));
+      const width = Math.max(...lines.map((line) => line.width));
+      const tensor = imageTensorBatch(lines.map((line) => padToWidth(line, width)), width, 48);
       const recResult = await this.recognizer!.run({ [this.recognizer!.inputNames[0]]: tensor });
-      const decoded = decodeCtc(recResult[this.recognizer!.outputNames[0]], this.dictionary!);
-      if (decoded.text) results.push({ ...box, text: decoded.text, confidence: box.confidence * decoded.confidence });
+      const outputTensor = recResult[this.recognizer!.outputNames[0]];
+      batchBoxes.forEach((box, index) => { const decoded = decodeCtc(outputTensor, this.dictionary!, index); if (decoded.text) results.push({ ...box, text: decoded.text, confidence: box.confidence * decoded.confidence }); });
     }
     results.sort((a, b) => Math.abs(a.y - b.y) < Math.max(a.height, b.height) * 0.5 ? a.x - b.x : a.y - b.y);
     const text = results.map((x) => x.text).join("\n");
@@ -120,6 +120,17 @@ function resizeForRecognition(image: ImageData): ImageData {
   const height = 48, width = Math.min(640, Math.max(16, Math.ceil((image.width / image.height) * height)));
   return resize(image, width, height);
 }
+function padToWidth(image: ImageData, width: number): ImageData {
+  if (image.width === width) return image;
+  const canvas = new OffscreenCanvas(width, image.height), context = canvas.getContext("2d", { willReadFrequently: true })!;
+  context.fillStyle = "white"; context.fillRect(0, 0, width, image.height); const source = new OffscreenCanvas(image.width, image.height); source.getContext("2d")!.putImageData(image, 0, 0); context.drawImage(source, 0, 0);
+  return context.getImageData(0, 0, width, image.height);
+}
+function imageTensorBatch(images: ImageData[], width: number, height: number): ort.Tensor {
+  const plane = width * height, data = new Float32Array(images.length * 3 * plane);
+  images.forEach((image, batch) => { for (let i = 0; i < plane; i++) for (let c = 0; c < 3; c++) data[batch * 3 * plane + c * plane + i] = (image.data[i * 4 + (2 - c)] / 255 - 0.5) / 0.5; });
+  return new ort.Tensor("float32", data, [images.length, 3, height, width]);
+}
 function resize(image: ImageData, width: number, height: number): ImageData {
   const source = new OffscreenCanvas(image.width, image.height), target = new OffscreenCanvas(width, height);
   source.getContext("2d")!.putImageData(image, 0, 0); target.getContext("2d")!.drawImage(source, 0, 0, width, height);
@@ -145,8 +156,9 @@ function probabilityBoxes(data: Float32Array, dims: readonly number[], sx: numbe
   return boxes;
 }
 function cropRegion(image: ImageData, box: Box): ImageData { const canvas=new OffscreenCanvas(Math.max(1,Math.round(box.width)),Math.max(1,Math.round(box.height))); const source=new OffscreenCanvas(image.width,image.height);source.getContext("2d")!.putImageData(image,0,0);canvas.getContext("2d")!.drawImage(source,box.x,box.y,box.width,box.height,0,0,canvas.width,canvas.height);return canvas.getContext("2d",{willReadFrequently:true})!.getImageData(0,0,canvas.width,canvas.height); }
-function decodeCtc(tensor: ort.Tensor, dict: string[]): { text: string; confidence: number } {
+function decodeCtc(tensor: ort.Tensor, dict: string[], batchIndex = 0): { text: string; confidence: number } {
   const data=tensor.data as Float32Array,dims=tensor.dims,classes=Number(dims[dims.length-1]),steps=Number(dims[dims.length-2]);let previous=-1,text="",score=0,count=0;
-  for(let t=0;t<steps;t++){let best=0,bestValue=-Infinity;for(let c=0;c<classes;c++){const value=data[t*classes+c];if(value>bestValue){bestValue=value;best=c;}}if(best!==0&&best!==previous){text+=dict[best]??"";score+=Math.max(0,Math.min(1,bestValue));count++;}previous=best;}
+  const base=batchIndex*steps*classes;
+  for(let t=0;t<steps;t++){let best=0,bestValue=-Infinity;for(let c=0;c<classes;c++){const value=data[base+t*classes+c];if(value>bestValue){bestValue=value;best=c;}}if(best!==0&&best!==previous){text+=dict[best]??"";score+=Math.max(0,Math.min(1,bestValue));count++;}previous=best;}
   return {text:text.trim(),confidence:count?score/count:0};
 }
