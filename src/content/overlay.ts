@@ -27,6 +27,14 @@ export class ResultOverlay {
     this.host.dataset.jevSwotRoot = "true";
     this.root = this.host.attachShadow({ mode: "closed" });
   }
+  dismiss() {
+    this.cancel();
+    this.question = undefined;
+    this.probability = undefined;
+    this.directResult = undefined;
+    this.preview = undefined;
+    this.host.remove();
+  }
   loading(question: ExtractedQuestion) { this.question = question; this.probability = undefined; this.directResult = undefined; this.preview = undefined; this.expanded = false; this.progress("正在准备识别…"); }
   directLoading(question: ExtractedQuestion) { this.question = question; this.probability = undefined; this.directResult = undefined; this.preview = undefined; this.expanded = false; this.progress("正在请求普通模型答题…"); }
   progress(message: string) { this.render(`<div class="status"><span class="spinner"></span>${escapeHtml(message)} <button data-action="cancel">取消</button></div>`); }
@@ -93,7 +101,7 @@ export class ResultOverlay {
     if (!this.host.isConnected) document.documentElement.append(this.host);
     const toggle = this.probability || this.directResult ? `<button data-action="toggle-details">${this.expanded ? "收起" : "详情"}</button>` : "";
     this.root.innerHTML = `<style>${CSS_TEXT}</style><section class="${this.expanded ? "expanded" : "compact"}" style="left:${this.position.left}px;top:${this.position.top}px"><header><b>Jev</b><small>Jev SWOT</small><span>${toggle}<button data-action="close">×</button></span></header><main>${content}</main></section>`;
-    this.root.querySelector('[data-action="close"]')?.addEventListener("click", () => { this.cancel(); this.question = undefined; this.probability = undefined; this.directResult = undefined; this.preview = undefined; this.host.remove(); });
+    this.root.querySelector('[data-action="close"]')?.addEventListener("click", () => this.dismiss());
     this.root.querySelector('[data-action="cancel"]')?.addEventListener("click", () => { this.cancel(); this.expanded = true; this.render(`<div class="warning">已取消当前请求。</div>${this.editor()}`); });
     this.root.querySelector('[data-action="toggle-details"]')?.addEventListener("click", () => { this.expanded = !this.expanded; this.render(this.expanded ? this.details() : this.compact()); });
     this.root.querySelector('[data-action="edit"]')?.addEventListener("click", () => { this.expanded = true; this.render(this.editor()); });
