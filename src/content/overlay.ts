@@ -69,7 +69,7 @@ export class ResultOverlay {
     }).join("");
     const summary = summarizeAnswer(p);
     const confidence = p.confidence == null ? `多选项概率相互独立，不合计为 100%${summary.uncertain ? " · 不确定" : ""}` : `整体置信度 ${(p.confidence * 100).toFixed(0)}%${summary.uncertain ? " · 不确定" : ""}`;
-    return `<div class="detail-view"><div class="rows">${rows}</div><small>${confidence} · ${escapeHtml(p.model)}</small>${this.warnings()}<div class="actions"><button data-action="edit">校正题目</button><button class="primary" data-action="explain">答案解析</button></div><div id="explanation"></div></div>`;
+    return `<div class="detail-view"><div class="rows">${rows}</div><small>${confidence} · ${escapeHtml(p.model)}</small>${this.warnings()}<div class="actions"><button data-action="edit">校正题目</button><button data-action="direct-answer">普通模型答题</button><button class="primary" data-action="explain">答案解析</button></div><small>普通模型答题只发送已确认的题干、上下文和选项，不上传截图。</small><div id="explanation"></div></div>`;
   }
   private directDetails() {
     const result = this.directResult; if (!result) return "";
