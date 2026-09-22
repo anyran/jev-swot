@@ -2,6 +2,7 @@ import puppeteer from "puppeteer-core";
 import { access, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 import { createServer } from "node:http";
 
 const platformCandidates = process.platform === "darwin"
@@ -17,7 +18,7 @@ const candidates = [process.env.CHROME_PATH, ...platformCandidates].filter(Boole
 let executablePath;
 for (const candidate of candidates) { try { await access(candidate); executablePath = candidate; break; } catch { /* try next */ } }
 if (!executablePath) throw new Error("Chrome/Chromium not found; set CHROME_PATH to run the extension smoke test.");
-const extensionPath = new URL("../dist/", import.meta.url).pathname, userDataDir = await mkdtemp(join(tmpdir(), "jev-swot-smoke-"));
+const extensionPath = fileURLToPath(new URL("../dist/", import.meta.url)), userDataDir = await mkdtemp(join(tmpdir(), "jev-swot-smoke-"));
 let browser, server;
 try {
   browser = await puppeteer.launch({ executablePath, headless: true, userDataDir, enableExtensions: [extensionPath], args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-crash-reporter"] });
