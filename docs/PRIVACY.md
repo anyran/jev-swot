@@ -16,8 +16,8 @@ Jev SWOT（Jev 做题家）只在用户通过快捷键、扩展按钮或 `Alt + 
 
 ## 存储
 
-- API Key 仅存于 `chrome.storage.session`，浏览器重启后清除。
-- 模型设置、OCR 阈值和禁用站点列表存于 `chrome.storage.local`。
+- 模型地址、模型名、能力设置、TypeSafe API Key 和普通模型 API Key 存于本机 `chrome.storage.local`，浏览器重启后仍会恢复；扩展不会将这些密钥同步到云端。用户点击设置页的“清除 API Key”后，才会删除会话和本机保存的密钥。
+- OCR 阈值、WebGPU 开关、视觉上传确认和禁用站点列表也存于 `chrome.storage.local`。
 - 扩展不持久保存网页正文、截图、OCR 内容、题目、答案或模型响应。
 
 ## 第三方服务

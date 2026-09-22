@@ -80,8 +80,17 @@ try {
   if (title !== "Jev 做题家设置 Jev SWOT") throw new Error(`Unexpected options title: ${title}`);
   const permissions = await page.evaluate(() => chrome.permissions.getAll());
   console.log(`Smoke: granted origins ${permissions.origins?.join(", ") ?? "none"}`);
-  await page.evaluate(() => chrome.storage.session.set({ secrets: { typeSafeApiKey: "smoke-only", llmApiKey: "smoke-llm" } }));
+  const setSmokeSecrets = async (secrets) => page.evaluate(async (value) => {
+    await Promise.all([
+      chrome.storage.session.set({ secrets: value }),
+      chrome.storage.local.set({ savedSecrets: value })
+    ]);
+  }, secrets);
+  await setSmokeSecrets({ typeSafeApiKey: "smoke-only", llmApiKey: "smoke-llm" });
   await page.evaluate(() => chrome.storage.local.set({ settings: { llm: { baseUrl: "https://api.openai.com/v1", model: "smoke-model", vision: "unsupported", structuredOutput: "unsupported" }, ocrThreshold: 0.5, useWebGpu: false, confirmVisionUpload: true, disabledHosts: [] } }));
+  await page.reload({ waitUntil: "domcontentloaded" });
+  const persisted = await page.evaluate(() => chrome.storage.local.get(["settings", "savedSecrets"]));
+  if (persisted.settings?.llm?.model !== "smoke-model" || persisted.savedSecrets?.typeSafeApiKey !== "smoke-only" || persisted.savedSecrets?.llmApiKey !== "smoke-llm") throw new Error(`Local configuration did not survive an options-page restart: ${JSON.stringify(persisted)}`);
   console.log("Smoke: options page ready; running packaged OCR");
   const ocr = await page.evaluate(async () => {
     if (!await chrome.offscreen.hasDocument()) await chrome.offscreen.createDocument({ url: "offscreen.html", reasons: [chrome.offscreen.Reason.BLOBS], justification: "Release smoke test for packaged local OCR" });
@@ -117,7 +126,7 @@ try {
   const answerChanged = await questionPage.$eval('input[type="radio"]', (input) => input.checked);
   if (answerChanged) throw new Error("Extension modified the page answer during smoke test");
   const directAnswer = await page.evaluate(async () => {
-    await chrome.storage.session.set({ secrets: { llmApiKey: "smoke-llm" } });
+    await Promise.all([chrome.storage.session.set({ secrets: { llmApiKey: "smoke-llm" } }), chrome.storage.local.set({ savedSecrets: { llmApiKey: "smoke-llm" } })]);
     const question = { source: "dom", questionType: "single", stem: "Which number is even?", options: [{ id: "option_1", label: "A", text: "3" }, { id: "option_2", label: "B", text: "4" }], sourceRect: { x: 0, y: 0, width: 1, height: 1 }, recognitionConfidence: 1, warnings: [] };
     const gate = await chrome.runtime.sendMessage({ type: "ANALYZE", requestId: crypto.randomUUID(), question, captureAuthorized: true });
     if (gate?.code !== "JEV_KEY_MISSING" || !gate.question) return { gate, answer: null };
@@ -128,7 +137,7 @@ try {
   if (directAnswerRequests !== 1) throw new Error(`Ordinary-model direct answer request was not observed exactly once (direct=${directAnswerRequests})`);
   const screenshotWithoutGesture = await page.evaluate(() => chrome.runtime.sendMessage({ type: "ANALYZE", requestId: crypto.randomUUID(), question: { source: "dom", questionType: "unknown", stem: "", options: [], sourceRect: { x: 0, y: 0, width: 320, height: 120 }, recognitionConfidence: 0.2, warnings: ["INCOMPLETE_OPTIONS"] }, captureAuthorized: false }));
   if (screenshotWithoutGesture?.code !== "CAPTURE_REQUIRES_SHORTCUT") throw new Error(`Screenshot fallback bypassed the explicit gesture gate: ${JSON.stringify(screenshotWithoutGesture)}`);
-  await page.evaluate(() => chrome.storage.session.set({ secrets: { typeSafeApiKey: "smoke-only", llmApiKey: "smoke-llm" } }));
+  await setSmokeSecrets({ typeSafeApiKey: "smoke-only", llmApiKey: "smoke-llm" });
   const fallback = await page.evaluate(async () => {
     const canvas = document.createElement("canvas"); canvas.width = 900; canvas.height = 340;
     const context = canvas.getContext("2d"); context.fillStyle = "white"; context.fillRect(0, 0, canvas.width, canvas.height); context.fillStyle = "black"; context.font = "42px Arial";
@@ -140,7 +149,7 @@ try {
   if (!jevInputWasClean) throw new Error("OCR structure model's excluded answer/explanation text reached the JEV request");
   if (llmRequests === 0 || jevRequests < 2) throw new Error(`OCR fallback smoke request chain was not observed (llm=${llmRequests}, vision=${visionRequests}, jev=${jevRequests})`);
   if (visionRequests !== 0) throw new Error("Canvas OCR smoke unexpectedly uploaded an image to the vision model");
-  await page.evaluate(() => chrome.storage.session.set({ secrets: { typeSafeApiKey: "smoke-only" } }));
+  await setSmokeSecrets({ typeSafeApiKey: "smoke-only" });
   const reviewRequired = await page.evaluate(async () => {
     const canvas = document.createElement("canvas"); canvas.width = 900; canvas.height = 340;
     const context = canvas.getContext("2d"); context.fillStyle = "white"; context.fillRect(0, 0, canvas.width, canvas.height); context.fillStyle = "black"; context.font = "42px Arial";
@@ -148,7 +157,7 @@ try {
     return chrome.runtime.sendMessage({ type: "ANALYZE", requestId: crypto.randomUUID(), question: { source: "dom", questionType: "unknown", stem: "", options: [], sourceRect: { x: 0, y: 0, width: canvas.width, height: canvas.height }, recognitionConfidence: 0.2, warnings: ["INCOMPLETE_OPTIONS"] }, screenshot: canvas.toDataURL("image/png"), devicePixelRatio: 1, captureAuthorized: true });
   });
   if (reviewRequired?.ok || reviewRequired?.code !== "STRUCTURE_REVIEW_REQUIRED") throw new Error(`OCR without a text model bypassed structure review: ${JSON.stringify(reviewRequired)}`);
-  await page.evaluate(() => chrome.storage.session.set({ secrets: { typeSafeApiKey: "smoke-only", llmApiKey: "smoke-llm" } }));
+  await setSmokeSecrets({ typeSafeApiKey: "smoke-only", llmApiKey: "smoke-llm" });
   await page.evaluate(() => chrome.storage.local.set({ settings: { llm: { baseUrl: "https://api.openai.com/v1", model: "smoke-model", vision: "auto", structuredOutput: "unsupported" }, ocrThreshold: 0.5, useWebGpu: false, confirmVisionUpload: true, disabledHosts: [] } }));
   const consent = await page.evaluate(async () => {
     const canvas = document.createElement("canvas"); canvas.width = 900; canvas.height = 340;
@@ -221,9 +230,18 @@ try {
   const multiple = await page.evaluate(() => chrome.runtime.sendMessage({ type: "ANALYZE", requestId: crypto.randomUUID(), question: { source: "user-edited", questionType: "multiple", stem: "请选择所有偶数。", options: [{ id: "option_1", label: "A", text: "2" }, { id: "option_2", label: "B", text: "3" }], sourceRect: { x: 0, y: 0, width: 1, height: 1 }, recognitionConfidence: 1, warnings: [] }, captureAuthorized: false }));
   if (!multiple?.ok || multiple.probability?.mode !== "independent-selection" || multiple.probability.options.length !== 2) throw new Error(`Multiple-choice Noul smoke returned an invalid response: ${JSON.stringify(multiple)}`);
   if (!multipleJevTargetsExplicit) throw new Error("Multiple-choice Noul request did not identify each target option without embedding option text");
-  await page.evaluate(() => chrome.runtime.sendMessage({ type: "CLEAR_SESSION" }));
-  const remainingSession = await page.evaluate(() => chrome.storage.session.get(null));
+  await browser.close();
+  browser = await puppeteer.launch({ executablePath, headless: true, userDataDir, enableExtensions: [extensionPath], args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-crash-reporter"] });
+  await browser.waitForTarget((item) => item.type() === "service_worker" && item.url().includes("assets/background.js"), { timeout: 15_000 });
+  const restartedPage = await browser.newPage();
+  await restartedPage.goto(`chrome-extension://${extensionId}/options.html`, { waitUntil: "domcontentloaded" });
+  const persistedAfterRestart = await restartedPage.evaluate(() => chrome.storage.local.get(["settings", "savedSecrets"]));
+  if (persistedAfterRestart.settings?.llm?.model !== "smoke-model" || persistedAfterRestart.savedSecrets?.typeSafeApiKey !== "smoke-only" || persistedAfterRestart.savedSecrets?.llmApiKey !== "smoke-llm") throw new Error(`Local configuration did not survive a browser restart: ${JSON.stringify(persistedAfterRestart)}`);
+  await restartedPage.evaluate(() => chrome.runtime.sendMessage({ type: "CLEAR_SESSION" }));
+  const remainingSession = await restartedPage.evaluate(() => chrome.storage.session.get(null));
   if (Object.keys(remainingSession).length !== 0) throw new Error(`Session secrets were not cleared: ${Object.keys(remainingSession).join(", ")}`);
+  const remainingLocal = await restartedPage.evaluate(() => chrome.storage.local.get("savedSecrets"));
+  if (Object.keys(remainingLocal.savedSecrets ?? {}).length !== 0) throw new Error(`Persisted secrets were not cleared: ${Object.keys(remainingLocal.savedSecrets ?? {}).join(", ")}`);
   console.log(`Chrome loaded Jev 做题家（Jev SWOT） ${extensionId}; DOM→JEV, Canvas→local OCR→text model→JEV, and streaming explanation flows are healthy (${Math.round(ocr.confidence * 100)}%, ${ocr.backend}).`);
 } finally {
   await browser?.close();

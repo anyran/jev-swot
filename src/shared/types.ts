@@ -56,7 +56,8 @@ export interface PersistentSettings {
   confirmVisionUpload: boolean;
   disabledHosts: string[];
 }
-export interface SessionSecrets { typeSafeApiKey?: string; llmApiKey?: string; visionDetected?: Capability; structuredOutputDetected?: Capability; capabilityKey?: string }
+/** Credentials and cached capability results persisted in the local profile. */
+export interface StoredSecrets { typeSafeApiKey?: string; llmApiKey?: string; visionDetected?: Capability; structuredOutputDetected?: Capability; capabilityKey?: string }
 
 export type WorkerRequest =
   | { type: "ANALYZE"; requestId: string; question: ExtractedQuestion; screenshot?: string; devicePixelRatio?: number; visionConsent?: "allow" | "deny"; captureAuthorized: boolean }

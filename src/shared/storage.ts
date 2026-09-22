@@ -1,4 +1,4 @@
-import { DEFAULT_SETTINGS, type PersistentSettings, type SessionSecrets } from "./types";
+import { DEFAULT_SETTINGS, type PersistentSettings, type StoredSecrets } from "./types";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -27,8 +27,8 @@ export function normalizeSettings(value: unknown): PersistentSettings {
   };
 }
 
-export function normalizeSecrets(value: unknown): SessionSecrets {
-  const raw = record(value), normalized: SessionSecrets = {};
+export function normalizeSecrets(value: unknown): StoredSecrets {
+  const raw = record(value), normalized: StoredSecrets = {};
   if (typeof raw.typeSafeApiKey === "string" && raw.typeSafeApiKey.trim()) normalized.typeSafeApiKey = raw.typeSafeApiKey.trim();
   if (typeof raw.llmApiKey === "string" && raw.llmApiKey.trim()) normalized.llmApiKey = raw.llmApiKey.trim();
   if (raw.visionDetected === "auto" || raw.visionDetected === "supported" || raw.visionDetected === "unsupported") normalized.visionDetected = raw.visionDetected;
@@ -42,12 +42,23 @@ export async function getSettings(): Promise<PersistentSettings> {
   return normalizeSettings(stored.settings);
 }
 export async function setSettings(settings: PersistentSettings): Promise<void> {
-  await chrome.storage.local.set({ settings: normalizeSettings(settings) });
+  const normalized = normalizeSettings(settings);
+  await chrome.storage.local.set({ settings: normalized });
 }
-export async function getSecrets(): Promise<SessionSecrets> {
-  const stored = await chrome.storage.session.get("secrets");
-  return normalizeSecrets(stored.secrets);
+export async function getSecrets(): Promise<StoredSecrets> {
+  const [sessionStored, localStored] = await Promise.all([
+    chrome.storage.session.get("secrets"),
+    chrome.storage.local.get("savedSecrets")
+  ]);
+  const sessionSecrets = normalizeSecrets(sessionStored.secrets);
+  const savedSecrets = normalizeSecrets(localStored.savedSecrets);
+  // Session values are newer than persisted values (for example after the
+  // user changes a key without restarting Chrome), while persisted values
+  // restore the configuration after a browser restart.
+  return { ...savedSecrets, ...sessionSecrets };
 }
-export async function setSecrets(secrets: SessionSecrets): Promise<void> {
-  await chrome.storage.session.set({ secrets: normalizeSecrets(secrets) });
+export async function setSecrets(secrets: StoredSecrets): Promise<void> {
+  const normalized = normalizeSecrets(secrets);
+  await chrome.storage.session.set({ secrets: normalized });
+  await chrome.storage.local.set({ savedSecrets: normalized });
 }

@@ -18,7 +18,7 @@ OpenAI 兼容模型完成截图文字结构化与按需答案解析。
 - 在结果详情中可以主动选择“普通模型答题”；如果没有配置 TypeSafe Key，也可以从 JEV 缺少密钥提示进入该路径。该模式只发送已确认的题干、上下文和选项，返回答案、教学解释、知识点和不确定性，不上传截图。
 - 单选显示归一化概率，多选显示每项独立选择概率。
 - 设置页可维护敏感站点禁用列表，并控制视觉模型上传截图前是否逐次确认。
-- API Key 只保存在 `chrome.storage.session`，不持久化页面或截图。
+- 模型地址、模型名、能力设置和 API Key 保存在本机 `chrome.storage.local`，浏览器重启后仍会恢复；“清除 API Key”操作会同时清除会话和本机保存的密钥。扩展仍不持久化页面或截图。
 
 ## 开发
 
@@ -58,7 +58,7 @@ npm run release
 [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md) 中的真实 API 和跨平台人工验收。
 隐私数据流见 [`docs/PRIVACY.md`](docs/PRIVACY.md)。
 
-如果已经准备好真实凭据，可用以下命令做一次不落盘的线上预检。脚本不会打印密钥；
+如果已经准备好真实凭据，可用以下命令做一次不落盘的线上预检。脚本不会保存或打印密钥；
 只设置 `JEV_TYPESAFE_API_KEY` 时验证 JEV，额外设置 `JEV_LLM_BASE_URL`、
 `JEV_LLM_MODEL` 和 `JEV_LLM_API_KEY` 时还会验证普通文本模型及视觉能力：
 

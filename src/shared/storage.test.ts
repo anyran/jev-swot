@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getSecrets, getSettings, normalizeSecrets, normalizeSettings } from "./storage";
+import { getSecrets, getSettings, normalizeSecrets, normalizeSettings, setSecrets } from "./storage";
 
 describe("storage normalization", () => {
   beforeEach(() => {
     vi.stubGlobal("chrome", {
       storage: {
-        local: { get: vi.fn(async () => ({ settings: {} })) },
-        session: { get: vi.fn(async () => ({ secrets: {} })) }
+        local: { get: vi.fn(async (key: string) => key === "settings" ? { settings: {} } : { savedSecrets: {} }), set: vi.fn(), remove: vi.fn() },
+        session: { get: vi.fn(async () => ({ secrets: {} })), set: vi.fn(), clear: vi.fn() }
       }
     });
   });
@@ -28,11 +28,33 @@ describe("storage normalization", () => {
   it("normalizes values loaded from Chrome storage", async () => {
     vi.stubGlobal("chrome", {
       storage: {
-        local: { get: vi.fn(async () => ({ settings: { disabledHosts: "not-an-array" } })) },
-        session: { get: vi.fn(async () => ({ secrets: { typeSafeApiKey: "  jev  " } })) }
+        local: { get: vi.fn(async (key: string) => key === "settings" ? { settings: { disabledHosts: "not-an-array" } } : { savedSecrets: {} }), set: vi.fn(), remove: vi.fn() },
+        session: { get: vi.fn(async () => ({ secrets: { typeSafeApiKey: "  jev  " } })), set: vi.fn(), clear: vi.fn() }
       }
     });
     expect((await getSettings()).disabledHosts).toEqual([]);
     expect((await getSecrets()).typeSafeApiKey).toBe("jev");
+  });
+
+  it("restores persisted API keys after a browser restart", async () => {
+    vi.stubGlobal("chrome", {
+      storage: {
+        local: { get: vi.fn(async (key: string) => key === "settings" ? { settings: {} } : { savedSecrets: { typeSafeApiKey: "saved-jev", llmApiKey: "saved-llm" } }), set: vi.fn(), remove: vi.fn() },
+        session: { get: vi.fn(async () => ({ secrets: {} })), set: vi.fn(), clear: vi.fn() }
+      }
+    });
+    await expect(getSecrets()).resolves.toMatchObject({ typeSafeApiKey: "saved-jev", llmApiKey: "saved-llm" });
+  });
+
+  it("writes API keys to local storage so they survive a browser restart", async () => {
+    const localSet = vi.fn();
+    vi.stubGlobal("chrome", {
+      storage: {
+        local: { get: vi.fn(async () => ({ savedSecrets: {} })), set: localSet, remove: vi.fn() },
+        session: { get: vi.fn(async () => ({ secrets: {} })), set: vi.fn(), clear: vi.fn() }
+      }
+    });
+    await setSecrets({ typeSafeApiKey: "jev" });
+    expect(localSet).toHaveBeenCalledWith({ savedSecrets: { typeSafeApiKey: "jev" } });
   });
 });

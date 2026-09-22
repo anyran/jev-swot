@@ -63,7 +63,7 @@ async function handle(request: Exclude<WorkerRequest, { type: "OCR" | "CROP_IMAG
     activeRequests.delete(request.requestId);
     return { ok: true };
   }
-  if (request.type === "CLEAR_SESSION") { await chrome.storage.session.clear(); return { ok: true }; }
+  if (request.type === "CLEAR_SESSION") { await chrome.storage.session.clear(); await chrome.storage.local.remove("savedSecrets"); return { ok: true }; }
   if (request.type === "RELEASE_OCR") {
     if (await hasOffscreenDocument()) await chrome.offscreen.closeDocument();
     return { ok: true };
