@@ -25,6 +25,8 @@ chrome.runtime.onConnect.addListener((port) => {
   port.onMessage.addListener((message: { question: ExtractedQuestion; probability: import("../shared/types").ProbabilityResult }) => {
     void (async () => {
       const settings = await getSettings(), secrets = await getSecrets();
+      const host = port.sender?.tab?.url ? new URL(port.sender.tab.url).hostname : "";
+      if (hostDisabled(host, settings.disabledHosts)) { port.postMessage({ type: "error", message: "Jev 做题家已在此站点禁用。" }); return; }
       if (!secrets.llmApiKey) throw new Error("请先在设置页填写普通模型 API Key。");
       await streamExplanation(message.question, message.probability, settings.llm, secrets.llmApiKey, (chunk) => port.postMessage({ type: "chunk", chunk }), controller.signal);
       port.postMessage({ type: "done" });
@@ -81,12 +83,14 @@ async function handle(request: Exclude<WorkerRequest, { type: "OCR" | "CROP_IMAG
     return { ok: true, diagnostic: results.join("；") };
   }
   if (request.type === "EXPLAIN") {
+    const host = sender.tab?.url ? new URL(sender.tab.url).hostname : "";
+    if (hostDisabled(host, settings.disabledHosts)) return { ok: false, code: "SITE_DISABLED", message: "Jev 做题家已在此站点禁用。", recoverable: true };
     if (!secrets.llmApiKey) return { ok: false, code: "LLM_KEY_MISSING", message: "请先在设置页填写普通模型 API Key。", recoverable: true };
     return { ok: true, explanation: await explainAnswer(request.question, request.probability, settings.llm, secrets.llmApiKey) };
   }
   if (request.type === "DIRECT_ANSWER") {
     const host = sender.tab?.url ? new URL(sender.tab.url).hostname : "";
-    if (host && settings.disabledHosts.some((entry) => host === entry || host.endsWith(`.${entry}`))) {
+    if (hostDisabled(host, settings.disabledHosts)) {
       return { ok: false, code: "SITE_DISABLED", message: "Jev 做题家已在此站点禁用。", recoverable: true };
     }
     if (!secrets.llmApiKey) return { ok: false, code: "LLM_KEY_MISSING", message: "请先在设置页填写普通模型 API Key。", recoverable: true, question: request.question };
@@ -103,7 +107,7 @@ async function handle(request: Exclude<WorkerRequest, { type: "OCR" | "CROP_IMAG
     } finally { activeRequests.delete(request.requestId); }
   }
   const host = sender.tab?.url ? new URL(sender.tab.url).hostname : "";
-  if (host && settings.disabledHosts.some((entry) => host === entry || host.endsWith(`.${entry}`))) {
+  if (hostDisabled(host, settings.disabledHosts)) {
     return { ok: false, code: "SITE_DISABLED", message: "Jev 做题家已在此站点禁用。", recoverable: true };
   }
   const controller = new AbortController(); activeRequests.set(request.requestId, controller);
@@ -162,6 +166,9 @@ async function recognizeFallback(base: ExtractedQuestion, screenshot: string, de
   const capabilities = currentCapabilities(settings.llm, secrets);
   const llm = effectiveLlm(settings.llm, capabilities);
   let visionFallbackWarning: "VISION_MODEL_UNSUPPORTED" | "VISION_SERVICE_UNAVAILABLE" | undefined;
+  if (settings.llm.vision === "unsupported" || capabilities.visionDetected === "unsupported") {
+    visionFallbackWarning = "VISION_MODEL_UNSUPPORTED";
+  }
   if (allowVision && secrets.llmApiKey && settings.llm.vision !== "unsupported" && (settings.llm.vision === "supported" || capabilities.visionDetected !== "unsupported")) {
     progress("vision", "正在调用视觉模型识别题目…");
     try {
@@ -311,6 +318,9 @@ function effectiveLlm(settings: import("../shared/types").LLMSettings, secrets: 
   return settings.structuredOutput === "auto" && capabilities.structuredOutputDetected && capabilities.structuredOutputDetected !== "auto" ? { ...settings, structuredOutput: capabilities.structuredOutputDetected } : settings;
 }
 function capabilityKey(settings: import("../shared/types").LLMSettings): string { return `${settings.baseUrl.trim().replace(/\/$/, "")}|${settings.model.trim()}`; }
+function hostDisabled(host: string, disabledHosts: string[]): boolean {
+  return !!host && disabledHosts.some((entry) => host === entry || host.endsWith(`.${entry}`));
+}
 function currentCapabilities(settings: import("../shared/types").LLMSettings, secrets: Awaited<ReturnType<typeof getSecrets>>) {
   return secrets.capabilityKey === capabilityKey(settings) ? secrets : { ...secrets, visionDetected: undefined, structuredOutputDetected: undefined };
 }

@@ -36,7 +36,8 @@ export class ResultOverlay {
     if (!response.ok) {
       this.expanded = true;
       const consent = response.code === "VISION_CONSENT_REQUIRED" ? `<div class="actions"><button data-action="local-only">仅本地 OCR（不上传截图）</button><button class="primary" data-action="allow-vision">允许本次上传</button></div>` : "";
-      const direct = response.code === "JEV_KEY_MISSING" && this.question ? `<div class="actions"><button class="primary" data-action="direct-answer">普通模型直接答题</button></div><small>只发送已确认的题干和选项，不上传截图。</small>` : "";
+      const canRetryDirect = response.code === "JEV_KEY_MISSING" || response.code === "DIRECT_ANSWER_FAILED";
+      const direct = canRetryDirect && this.question ? `<div class="actions"><button class="primary" data-action="direct-answer">普通模型直接答题</button></div><small>只发送已确认的题干和选项，不上传截图。</small>` : "";
       this.render(`<div class="error">${escapeHtml(response.message)}</div>${consent}${direct}${response.code === "VISION_CONSENT_REQUIRED" ? "" : this.editor()}`); return;
     }
     if (response.directAnswer) {
