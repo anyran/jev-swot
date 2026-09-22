@@ -101,4 +101,19 @@ describe("compact answer summary", () => {
     expect(select?.value).toBe("unknown");
     close(overlay);
   });
+
+  it("keeps the shortcut capture grant when retrying vision consent", () => {
+    const retry = vi.fn();
+    const overlay = new ResultOverlay(retry, vi.fn(), vi.fn(), vi.fn());
+    overlay.loading(question, true);
+    overlay.show({ ok: false, code: "VISION_CONSENT_REQUIRED", message: "允许上传？", recoverable: true });
+    shadow(overlay).querySelector<HTMLElement>('[data-action="allow-vision"]')?.click();
+    expect(retry).toHaveBeenCalledWith(question, "allow", true);
+
+    overlay.loading(question, true);
+    overlay.show({ ok: false, code: "VISION_CONSENT_REQUIRED", message: "允许上传？", recoverable: true });
+    shadow(overlay).querySelector<HTMLElement>('[data-action="local-only"]')?.click();
+    expect(retry).toHaveBeenLastCalledWith(question, "deny", true);
+    close(overlay);
+  });
 });

@@ -42,7 +42,24 @@ let explanationPort: chrome.runtime.Port | undefined;
 let selectionCaptureAuthorized = false;
 let disabledForSite: boolean | undefined;
 let disabledStateReady = refreshDisabledState();
-chrome.storage.onChanged.addListener((changes, areaName) => { if (areaName === "local" && changes.settings) disabledStateReady = refreshDisabledState(); });
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== "local" || !changes.settings) return;
+  // Apply a newly-added disabled host synchronously.  The async storage
+  // refresh still handles removals and normalization, but a sensitive site
+  // must not have an interception window while that read is pending.
+  const next = changes.settings.newValue;
+  const rawHosts = next && typeof next === "object" && !Array.isArray(next)
+    ? (next as Record<string, unknown>).disabledHosts
+    : undefined;
+  if (Array.isArray(rawHosts)) {
+    const host = location.hostname.toLowerCase();
+    const disabledHosts = rawHosts
+      .map((entry) => typeof entry === "string" ? entry.trim().toLowerCase().replace(/^\.+|\.+$/g, "") : "")
+      .filter(Boolean);
+    if (disabledHosts.some((entry) => host === entry || host.endsWith(`.${entry}`))) stopForDisabledSite();
+  }
+  disabledStateReady = refreshDisabledState();
+});
 
 chrome.runtime.onMessage.addListener((message: { type?: string } | RuntimeProgressMessage, _sender, sendResponse) => {
   if (message.type === "PING") { sendResponse({ ok: true }); return false; }
@@ -95,7 +112,7 @@ function up(event: PointerEvent) {
 function cancelOnEscape(event: KeyboardEvent) { if (event.key === "Escape") { selectionCaptureAuthorized = false; cleanup(); } }
 function cleanup() { selecting = false; selectionBox?.remove(); selectionBox = null; document.documentElement.style.cursor = ""; document.removeEventListener("pointerdown", down, true); document.removeEventListener("pointermove", move, true); document.removeEventListener("pointerup", up, true); document.removeEventListener("keydown", cancelOnEscape, true); }
 async function analyze(question: ExtractedQuestion, visionConsent?: "allow" | "deny", captureAuthorized = false) {
-  cancelActive(); const sequence = ++analysisSequence, requestId = crypto.randomUUID(); activeRequestId = requestId; overlay.loading(question);
+  cancelActive(); const sequence = ++analysisSequence, requestId = crypto.randomUUID(); activeRequestId = requestId; overlay.loading(question, captureAuthorized);
   const response = await chrome.runtime.sendMessage({ type: "ANALYZE", requestId, question, devicePixelRatio: window.devicePixelRatio, visionConsent, captureAuthorized }).catch((error: unknown) => ({ ok: false, code: "UNEXPECTED", message: error instanceof Error ? error.message : "扩展后台暂时不可用，请重试。", recoverable: true })) as WorkerResponse;
   if (sequence === analysisSequence) { activeRequestId = undefined; overlay.show(response); }
 }
@@ -128,14 +145,23 @@ function cancelActive() {
 function isEditable(target: EventTarget | null) { return target instanceof Element && (!!target.closest("input,textarea,select,[contenteditable]:not([contenteditable=false])") || document.designMode === "on"); }
 function isExtensionNode(target: EventTarget | null) { return target instanceof Element && !!target.closest("[data-jev-swot-root]"); }
 async function refreshDisabledState() {
-  const settings = await getSettings();
-  const host = location.hostname.toLowerCase();
-  disabledForSite = settings.disabledHosts.some((entry) => host === entry || host.endsWith(`.${entry}`));
-  if (disabledForSite) {
-    selectionCaptureAuthorized = false;
-    if (selecting) cleanup();
-    overlay.dismiss();
+  try {
+    const settings = await getSettings();
+    const host = location.hostname.toLowerCase();
+    disabledForSite = settings.disabledHosts.some((entry) => host === entry || host.endsWith(`.${entry}`));
+    if (disabledForSite) stopForDisabledSite();
+  } catch {
+    // Fail closed if storage is unavailable.  A transient settings failure
+    // must not enable page interception or screenshot analysis by accident.
+    disabledForSite = true;
+    stopForDisabledSite();
   }
+}
+function stopForDisabledSite() {
+  disabledForSite = true;
+  selectionCaptureAuthorized = false;
+  if (selecting) cleanup();
+  overlay.dismiss();
 }
 async function whenSiteEnabled(action: () => void): Promise<void> {
   await disabledStateReady;

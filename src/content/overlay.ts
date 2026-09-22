@@ -23,7 +23,8 @@ export class ResultOverlay {
   private preview?: RecognitionPreview;
   private position = { left: 16, top: 16 };
   private expanded = false;
-  constructor(private retry: (q: ExtractedQuestion, visionConsent?: "allow" | "deny") => void, private explain: (q: ExtractedQuestion, p: ProbabilityResult) => void, private direct: (q: ExtractedQuestion) => void, private cancel: () => void) {
+  private captureAuthorized = false;
+  constructor(private retry: (q: ExtractedQuestion, visionConsent?: "allow" | "deny", captureAuthorized?: boolean) => void, private explain: (q: ExtractedQuestion, p: ProbabilityResult) => void, private direct: (q: ExtractedQuestion) => void, private cancel: () => void) {
     this.host.dataset.jevSwotRoot = "true";
     this.root = this.host.attachShadow({ mode: "closed" });
   }
@@ -33,9 +34,10 @@ export class ResultOverlay {
     this.probability = undefined;
     this.directResult = undefined;
     this.preview = undefined;
+    this.captureAuthorized = false;
     this.host.remove();
   }
-  loading(question: ExtractedQuestion) { this.question = question; this.probability = undefined; this.directResult = undefined; this.preview = undefined; this.expanded = false; this.progress("正在准备识别…"); }
+  loading(question: ExtractedQuestion, captureAuthorized = false) { this.question = question; this.probability = undefined; this.directResult = undefined; this.preview = undefined; this.captureAuthorized = captureAuthorized; this.expanded = false; this.progress("正在准备识别…"); }
   directLoading(question: ExtractedQuestion) { this.question = question; this.probability = undefined; this.directResult = undefined; this.preview = undefined; this.expanded = false; this.progress("正在请求普通模型答题…"); }
   progress(message: string) { this.render(`<div class="status"><span class="spinner"></span>${escapeHtml(message)} <button data-action="cancel">取消</button></div>`); }
   show(response: WorkerResponse) {
@@ -109,8 +111,8 @@ export class ResultOverlay {
     this.root.querySelector('[data-action="explain"]')?.addEventListener("click", () => { if (this.question && this.probability) { this.explanation("正在生成解析…"); this.explain(this.question, this.probability); } });
     this.root.querySelector('[data-action="direct-answer"]')?.addEventListener("click", () => { if (this.question) this.direct(this.question); });
     this.root.querySelector('[data-action="retry"]')?.addEventListener("click", () => this.submitEdit());
-    this.root.querySelector('[data-action="local-only"]')?.addEventListener("click", () => { if (this.question) this.retry(this.question, "deny"); });
-    this.root.querySelector('[data-action="allow-vision"]')?.addEventListener("click", () => { if (this.question) this.retry(this.question, "allow"); });
+    this.root.querySelector('[data-action="local-only"]')?.addEventListener("click", () => { if (this.question) this.retry(this.question, "deny", this.captureAuthorized); });
+    this.root.querySelector('[data-action="allow-vision"]')?.addEventListener("click", () => { if (this.question) this.retry(this.question, "allow", this.captureAuthorized); });
     this.root.querySelectorAll<HTMLElement>("[data-option-id]").forEach((row) => row.addEventListener("click", () => this.highlightOption(row.dataset.optionId!)));
     this.root.querySelectorAll<HTMLElement>(".ocr-box").forEach((box) => box.addEventListener("click", () => { const summary = box.getAttribute("title"); if (summary) box.setAttribute("data-label", summary); }));
     this.bindDragging();
