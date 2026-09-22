@@ -38,9 +38,14 @@ export function findQuestionContainer(start: Element): Element {
     const text = cleanText((current as HTMLElement).innerText || current.textContent || "");
     const controls = current.querySelectorAll("input[type=radio],input[type=checkbox]").length;
     const lists = current.querySelectorAll("li,label").length;
+    const semanticOptions = current.querySelectorAll("[role=radio],[role=checkbox],[role=option],tr").length;
     const images = current.querySelectorAll("img,canvas,svg").length;
     const rect = current.getBoundingClientRect();
     const oversize = current === document.body || current === document.documentElement || rect.height > innerHeight * 1.8 || rect.width > innerWidth * 1.2 || text.length > 5000 ? 100 : 0;
+    // Prefer the nearest self-contained question group.  A page with several
+    // questions should not win merely because its aggregate option count is
+    // larger than the group under the pointer.
+    if (depth > 0 && text.length >= 10 && oversize === 0 && (controls >= 2 || lists >= 2 || semanticOptions >= 2)) return current;
     const score = Math.min(text.length, 1000) / 100 + Math.min(controls, 8) * 8 + Math.min(lists, 8) * 2 + Math.min(images, 4) * 2 - depth - oversize;
     if (text.length >= 10 && score > bestScore) { best = current; bestScore = score; }
   }

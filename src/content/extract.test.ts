@@ -18,6 +18,12 @@ describe("DOM extraction", () => {
     const target = document.getElementById("target")!;
     expect(findQuestionContainer(target).classList.contains("question")).toBe(true);
   });
+  it("keeps the nearest question when a realistic page has several option groups", () => {
+    const main = document.querySelector("main")!;
+    Object.defineProperty(main, "getBoundingClientRect", { configurable: true, value: () => ({ x: 0, y: 0, width: 900, height: 700, right: 900, bottom: 700 }) });
+    const target = document.getElementById("target")!;
+    expect(findQuestionContainer(target).classList.contains("question")).toBe(true);
+  });
   it("extracts radio options as a single-choice question", () => {
     const question = extractFromElement(document.querySelectorAll(".question")[1]);
     expect(question.questionType).toBe("single");
