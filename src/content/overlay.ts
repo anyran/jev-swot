@@ -8,11 +8,11 @@ export class ResultOverlay {
   private preview?: RecognitionPreview;
   private position = { left: 16, top: 16 };
   constructor(private retry: (q: ExtractedQuestion, visionConsent?: "allow" | "deny") => void, private explain: (q: ExtractedQuestion, p: ProbabilityResult) => void, private cancel: () => void) {
-    this.host.dataset.jevanswerRoot = "true";
+    this.host.dataset.jevSwotRoot = "true";
     this.root = this.host.attachShadow({ mode: "closed" });
     document.documentElement.append(this.host);
   }
-  loading(question: ExtractedQuestion) { this.question = question; this.render(`<div class="status"><span class="spinner"></span>正在识别并评估… <button data-action="cancel">取消</button></div>`); }
+  loading(question: ExtractedQuestion) { this.question = question; this.probability = undefined; this.preview = undefined; this.render(`<div class="status"><span class="spinner"></span>正在识别并评估… <button data-action="cancel">取消</button></div>`); }
   show(response: WorkerResponse) {
     if (response.question) this.question = response.question;
     if (response.preview) this.preview = response.preview;
@@ -40,7 +40,8 @@ export class ResultOverlay {
     return `<details class="preview" open><summary>识别原图与文本框</summary><div class="preview-image"><img src="${escapeHtml(p.imageDataUrl)}" alt="本次识别的题目截图">${boxes}</div><small>点击或悬停文本框可查看 OCR 文字和置信度；截图仅保留在本次覆盖层内。</small></details>`;
   }
   private render(content: string) {
-    this.root.innerHTML = `<style>${CSS_TEXT}</style><section style="left:${this.position.left}px;top:${this.position.top}px"><header><b>JevAnswer</b><span><button data-action="collapse">—</button><button data-action="close">×</button></span></header><main>${content}</main></section>`;
+    if (!this.host.isConnected) document.documentElement.append(this.host);
+    this.root.innerHTML = `<style>${CSS_TEXT}</style><section style="left:${this.position.left}px;top:${this.position.top}px"><header><b>Jev 做题家</b><small>Jev SWOT</small><span><button data-action="collapse">—</button><button data-action="close">×</button></span></header><main>${content}</main></section>`;
     this.root.querySelector('[data-action="close"]')?.addEventListener("click", () => { this.cancel(); this.host.remove(); });
     this.root.querySelector('[data-action="cancel"]')?.addEventListener("click", () => { this.cancel(); this.render(`<div class="warning">已取消当前请求。</div>${this.editor()}`); });
     this.root.querySelector('[data-action="collapse"]')?.addEventListener("click", () => this.root.querySelector("main")?.classList.toggle("hidden"));
@@ -56,7 +57,7 @@ export class ResultOverlay {
   private highlightOption(id: string) {
     const rect = this.question?.options.find((option) => option.id === id)?.sourceRect;
     if (!rect) return;
-    const marker = document.createElement("div"); marker.dataset.jevanswerRoot = "highlight";
+    const marker = document.createElement("div"); marker.dataset.jevSwotRoot = "highlight";
     Object.assign(marker.style, { position: "fixed", zIndex: "2147483645", pointerEvents: "none", left: `${rect.x}px`, top: `${rect.y}px`, width: `${rect.width}px`, height: `${rect.height}px`, border: "2px solid #f59e0b", background: "#f59e0b22", borderRadius: "4px" });
     document.documentElement.append(marker); setTimeout(() => marker.remove(), 1800);
   }

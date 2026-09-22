@@ -11,7 +11,7 @@ if (!executablePath) throw new Error("Chrome/Chromium not found; set CHROME_PATH
 
 const extensionPath = new URL("../dist/", import.meta.url).pathname;
 const outputPath = new URL("../store-assets/", import.meta.url).pathname;
-const userDataDir = await mkdtemp(join(tmpdir(), "jevanswer-store-"));
+const userDataDir = await mkdtemp(join(tmpdir(), "jev-swot-store-"));
 let browser, server;
 try {
   await mkdir(outputPath, { recursive: true });
@@ -38,7 +38,7 @@ try {
   const page = await browser.newPage(); await page.setViewport({ width: 1280, height: 800, deviceScaleFactor: 1 });
   await page.goto(`http://127.0.0.1:${address.port}/`, { waitUntil: "networkidle0" });
   await page.$eval("#choice-a", (element) => element.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, altKey: true })));
-  await page.waitForSelector('[data-jevanswer-root="true"]'); await new Promise((resolve) => setTimeout(resolve, 800));
+  await page.waitForSelector('[data-jev-swot-root="true"]'); await new Promise((resolve) => setTimeout(resolve, 800));
   await page.screenshot({ path: join(outputPath, "probabilities.png") });
   console.log(`Created store screenshots in ${outputPath}`);
 } finally {

@@ -1,6 +1,6 @@
-# JevAnswer
+# Jev SWOT / Jev 做题家
 
-Chrome/Chromium Manifest V3 学习辅助扩展。它从当前网页提取单选或多选题，调用
+`Jev SWOT`（中文产品名：`Jev 做题家`）是一个 Chrome/Chromium Manifest V3 学习辅助扩展。它从当前网页提取单选或多选题，调用
 [TypeSafe Jev](https://docs.typesafe.ai/introduction) 返回各选项概率，并按需使用
 OpenAI 兼容模型生成答案解析。
 
@@ -46,7 +46,7 @@ npm run release
 ```
 
 发布命令会执行类型检查、测试、模型哈希校验、图标生成、生产构建并生成
-`release/jevanswer-<version>.zip`。发布前还必须完成
+`release/jev-swot-<version>.zip`。发布前还必须完成
 [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md) 中的真实 API 和跨平台人工验收。
 隐私数据流见 [`docs/PRIVACY.md`](docs/PRIVACY.md)。
 

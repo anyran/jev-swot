@@ -19,4 +19,14 @@ describe("OpenAI-compatible structured output", () => {
     const result = await streamExplanation({ source: "dom", questionType: "single", stem: "q", options: [], sourceRect: { x: 0, y: 0, width: 1, height: 1 }, recognitionConfidence: 1, warnings: [] }, { mode: "single-distribution", options: [], model: "jev" }, settings, "secret", (chunk) => chunks.push(chunk));
     expect(result).toBe("答案是 B"); expect(chunks).toEqual(["答案", "是 B"]);
   });
+  it("classifies an image rejection as unsupported vision", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("image_url is not supported", { status: 400 })));
+    await expect(structureOcrText("ignored", settings, "secret")).rejects.toMatchObject({ unsupportedVision: true, retryable: false });
+  });
+  it("does not retry when the caller already cancelled", async () => {
+    const controller = new AbortController(); controller.abort();
+    const fetchMock = vi.fn(); vi.stubGlobal("fetch", fetchMock);
+    await expect(structureOcrText("ignored", settings, "secret", controller.signal)).rejects.toMatchObject({ retryable: false });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });

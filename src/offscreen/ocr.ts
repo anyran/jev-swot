@@ -121,7 +121,7 @@ function cropBitmap(bitmap: ImageBitmap, rect: DOMRectLike, dpr: number): ImageD
   const right = Math.max(x + 1, Math.min(bitmap.width, Math.round((rect.x + rect.width) * dpr)));
   const bottom = Math.max(y + 1, Math.min(bitmap.height, Math.round((rect.y + rect.height) * dpr)));
   const w = right - x, h = bottom - y;
-  const scale = Math.min(1, 2400 / Math.max(w, h));
+  const scale = Math.min(2, 2400 / Math.max(w, h));
   const canvas = new OffscreenCanvas(Math.max(1, Math.round(w * scale)), Math.max(1, Math.round(h * scale)));
   const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
   ctx.drawImage(bitmap, x, y, w, h, 0, 0, canvas.width, canvas.height); bitmap.close();

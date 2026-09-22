@@ -8,6 +8,7 @@ function questionSchema() {
   return { name: "question", strict: true, schema: { type: "object", additionalProperties: false, required: ["questionType", "stem", "options", "context", "visualDependency", "visualDependencyReason"], properties: { questionType: { enum: ["single", "multiple", "unknown"] }, stem: { type: "string" }, context: { type: "string" }, visualDependency: { type: "boolean" }, visualDependencyReason: { type: "string" }, options: { type: "array", minItems: 2, maxItems: 255, items: { type: "object", additionalProperties: false, required: ["label", "text"], properties: { label: { type: "string" }, text: { type: "string" } } } } } } };
 }
 async function call(settings: LLMSettings, apiKey: string, body: object, signal?: AbortSignal): Promise<Response> {
+  if (signal?.aborted) throw new LlmError("模型请求已取消。", undefined, false, false);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(new DOMException("模型请求超时", "TimeoutError")), 45_000);
   const abort = () => controller.abort(signal?.reason);
@@ -15,12 +16,14 @@ async function call(settings: LLMSettings, apiKey: string, body: object, signal?
   try {
     return await fetch(endpoint(settings.baseUrl), { method: "POST", signal: controller.signal, headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, body: JSON.stringify(body) });
   } catch (error) {
-    if (controller.signal.aborted) throw new LlmError("模型请求超时或已取消。", undefined, false, true);
+    if (signal?.aborted) throw new LlmError("模型请求已取消。", undefined, false, false);
+    if (controller.signal.aborted) throw new LlmError("模型请求超时。", undefined, false, true);
     throw new LlmError(error instanceof Error ? error.message : "模型网络请求失败。", undefined, false, true);
   } finally { clearTimeout(timeout); signal?.removeEventListener("abort", abort); }
 }
 type Message = { role: string; content: unknown };
-async function structuredQuestion(messages: Message[], settings: LLMSettings, apiKey: string, signal?: AbortSignal): Promise<Partial<ExtractedQuestion>> {
+export type StructuredQuestionResult = Partial<ExtractedQuestion> & { structuredOutputDetected?: "supported" | "unsupported" };
+async function structuredQuestion(messages: Message[], settings: LLMSettings, apiKey: string, signal?: AbortSignal): Promise<StructuredQuestionResult> {
   const formats: Array<object | undefined> = settings.structuredOutput === "unsupported" ? [{ type: "json_object" }, undefined] : [{ type: "json_schema", json_schema: questionSchema() }, { type: "json_object" }, undefined];
   let lastError: LlmError | undefined;
   for (const responseFormat of formats) {
@@ -29,7 +32,7 @@ async function structuredQuestion(messages: Message[], settings: LLMSettings, ap
     const response = await call(settings, apiKey, body, signal);
     if (response.ok) {
       const data = await response.json();
-      return parseJsonObject(data.choices?.[0]?.message?.content ?? "{}");
+      return { ...parseJsonObject(data.choices?.[0]?.message?.content ?? "{}"), structuredOutputDetected: (responseFormat as { type?: string } | undefined)?.type === "json_schema" ? "supported" : "unsupported" };
     }
     const responseText = await response.text().catch(() => "");
     const unsupportedVision = response.status === 400 && /image|vision|multimodal|image_url/i.test(responseText);
@@ -40,10 +43,10 @@ async function structuredQuestion(messages: Message[], settings: LLMSettings, ap
   }
   throw lastError ?? new LlmError("模型未返回有效题目结构。");
 }
-export async function recognizeWithVision(imageDataUrl: string, settings: LLMSettings, apiKey: string, signal?: AbortSignal): Promise<Partial<ExtractedQuestion>> {
+export async function recognizeWithVision(imageDataUrl: string, settings: LLMSettings, apiKey: string, signal?: AbortSignal): Promise<StructuredQuestionResult> {
   return structuredQuestion([{ role: "system", content: "从题目截图中忠实提取题干和选项。不要解题，不要补充看不见的内容。如果作答依赖图表、几何图、化学结构、公式排版或其他非文字视觉信息，visualDependency 必须为 true，visualDependencyReason 简述原因，并在 context 中客观、完整地描述解题所需的可见关系、标注和数值，供后续判断模型使用。只输出 JSON。" }, { role: "user", content: [{ type: "text", text: "提取这道题及作答所需的视觉信息。" }, { type: "image_url", image_url: { url: imageDataUrl } }] }], settings, apiKey, signal);
 }
-export async function structureOcrText(text: string, settings: LLMSettings, apiKey: string, signal?: AbortSignal): Promise<Partial<ExtractedQuestion>> {
+export async function structureOcrText(text: string, settings: LLMSettings, apiKey: string, signal?: AbortSignal): Promise<StructuredQuestionResult> {
   return structuredQuestion([{ role: "system", content: "将 OCR 文本忠实整理为题目结构。不要解题或改写内容。visualDependency 设为 false，visualDependencyReason 设为空字符串。只输出 JSON。" }, { role: "user", content: text }], settings, apiKey, signal);
 }
 export async function explainAnswer(question: ExtractedQuestion, probability: ProbabilityResult, settings: LLMSettings, apiKey: string, signal?: AbortSignal): Promise<string> {

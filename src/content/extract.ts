@@ -1,7 +1,10 @@
 import type { ExtractedQuestion, QuestionOption, RecognitionWarning } from "../shared/types";
 
-const EXCLUDED = "script,style,noscript,nav,header,footer,aside,[role='banner'],[role='navigation'],[hidden],[aria-hidden='true'],[data-jevanswer-root]";
+const EXCLUDED = "script,style,noscript,nav,header,footer,aside,[role='banner'],[role='navigation'],[hidden],[aria-hidden='true'],[data-jev-swot-root]";
 const VISUAL_CUE = /(?:如图|下图|图中|曲线|阴影|图表|几何|diagram|graph|figure|chart)/i;
+const FORMULA_CUE = /[∑√∫≈≠≤≥^]|\b(?:sin|cos|tan|log)\b|\$[^$]+\$/i;
+const MULTIPLE_CUE = /(?:多选|可多选|选择所有|所有正确|select all|multiple choice)/i;
+const SINGLE_CUE = /(?:单选|只能选择一项|判断题|single choice|true or false)/i;
 function visible(element: Element): boolean {
   const style = getComputedStyle(element);
   const rect = element.getBoundingClientRect();
@@ -9,6 +12,12 @@ function visible(element: Element): boolean {
 }
 function rectOf(element: Element) { const r = element.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; }
 function cleanText(text: string): string { return text.replace(/[\t ]+/g, " ").replace(/\n{3,}/g, "\n\n").trim(); }
+function isOptionNode(node: Element): boolean {
+  if (!visible(node)) return false;
+  if (!node.matches("tr")) return true;
+  const cells = node.querySelectorAll("td,th");
+  return cells.length >= 2 && !node.querySelector("th:first-child");
+}
 function visibleText(element: Element): string {
   const pieces: string[] = [], walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
   let node: Node | null;
@@ -42,11 +51,11 @@ export function extractFromElement(element: Element): ExtractedQuestion {
   const controls = [...element.querySelectorAll<HTMLInputElement>("input[type=radio],input[type=checkbox]")].filter(visible);
   const optionElements = controls.length
     ? controls.map((input) => input.closest("label") ?? (input.id ? element.querySelector(`label[for='${CSS.escape(input.id)}']`) : null) ?? input.parentElement).filter(Boolean) as Element[]
-    : [...element.querySelectorAll("li,label,[role=radio],[role=checkbox]")].filter(visible);
+    : [...element.querySelectorAll("li,label,[role=radio],[role=checkbox],[role=option],tr")].filter(isOptionNode);
   const dedup = [...new Set(optionElements)];
   const options: QuestionOption[] = dedup.map((node, index) => {
     const raw = cleanText(visibleText(node) || node.getAttribute("aria-label") || "");
-    const match = /^\s*([A-Ha-h]|[1-9]|[①②③④⑤⑥⑦⑧⑨])[.、)）:]?\s*(.*)$/.exec(raw);
+    const match = /^\s*([A-Ha-h]|[1-9]|[①②③④⑤⑥⑦⑧⑨])(?:[.、)）:]|\s+)\s*(.*)$/.exec(raw);
     return { id: `option_${index + 1}`, label: match?.[1]?.toUpperCase() ?? String.fromCharCode(65 + index), text: match?.[2] || raw };
   }).filter((x) => x.text);
   const allText = visibleText(element);
@@ -60,11 +69,13 @@ export function extractFromElement(element: Element): ExtractedQuestion {
   const hasRadio = controls.some((input) => input.type === "radio");
   const hasCheckboxRole = !!element.querySelector("[role=checkbox]");
   const hasRadioRole = !!element.querySelector("[role=radio]");
+  const questionType = hasCheckbox || hasCheckboxRole ? "multiple" : hasRadio || hasRadioRole ? "single" : MULTIPLE_CUE.test(allText) ? "multiple" : SINGLE_CUE.test(allText) ? "single" : "unknown";
   const hasRelevantVisual = VISUAL_CUE.test(allText) && [...element.querySelectorAll("img,canvas,svg")].some(visible);
   const warnings: RecognitionWarning[] = stem && options.length >= 2 ? [] : ["INCOMPLETE_OPTIONS"];
+  if (FORMULA_CUE.test(allText)) warnings.push("POSSIBLE_FORMULA");
   if (hasRelevantVisual) warnings.push("POSSIBLE_DIAGRAM", "VISION_MODEL_REQUIRED");
   return {
-    source: "dom", questionType: hasCheckbox || hasCheckboxRole ? "multiple" : hasRadio || hasRadioRole ? "single" : "unknown",
+    source: "dom", questionType,
     stem, options, sourceRect: rectOf(element), recognitionConfidence: stem && options.length >= 2 ? 0.95 : 0.45,
     warnings
   };

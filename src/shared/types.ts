@@ -43,7 +43,7 @@ export interface PersistentSettings {
   confirmVisionUpload: boolean;
   disabledHosts: string[];
 }
-export interface SessionSecrets { typeSafeApiKey?: string; llmApiKey?: string; visionDetected?: Capability }
+export interface SessionSecrets { typeSafeApiKey?: string; llmApiKey?: string; visionDetected?: Capability; structuredOutputDetected?: Capability }
 
 export type WorkerRequest =
   | { type: "ANALYZE"; requestId: string; question: ExtractedQuestion; screenshot?: string; devicePixelRatio?: number; visionConsent?: "allow" | "deny"; captureAuthorized: boolean }

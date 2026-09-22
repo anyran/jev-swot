@@ -1,10 +1,10 @@
-# 发布检查清单
+# Jev SWOT / Jev 做题家发布检查清单
 
 ## 自动门槛
 
 - [x] `npm ci`（锁文件安装）
 - [x] 固定 revision 的模型资产通过 `npm run verify:models` SHA-256 校验
-- [x] `npm run release`（类型检查、18 项单元测试、模型、构建、Chrome 冒烟及 ZIP）
+- [x] `npm run release`（类型检查、完整单元测试、模型、构建、Chrome 冒烟及 ZIP）
 - [x] 生产目录作为未打包扩展加载并实际运行 PP-OCRv5
 - [x] Chrome 无 manifest、CSP 或 service worker 错误
 - [x] 发布 ZIP 包含模型、WASM、许可证、第三方声明和隐私说明

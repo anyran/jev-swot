@@ -14,7 +14,7 @@ let lastCaptureAuthorized = false;
 
 chrome.runtime.onMessage.addListener((message) => { if (message.type === "START_SELECTION") { selectionCaptureAuthorized = true; startSelection(); } });
 document.addEventListener("dblclick", (event) => {
-  if (!event.altKey || isEditable(event.target)) return;
+  if (!event.altKey || isEditable(event.target) || isExtensionNode(event.target)) return;
   event.preventDefault(); event.stopPropagation();
   const target = event.target instanceof Element ? event.target : document.body;
   analyze(extractFromElement(findQuestionContainer(target)), undefined, false);
@@ -27,8 +27,8 @@ function startSelection() {
   document.addEventListener("keydown", cancelOnEscape, true);
 }
 function down(event: PointerEvent) {
-  if (event.button !== 0) return; event.preventDefault(); start = { x: event.clientX, y: event.clientY };
-  selectionBox = document.createElement("div"); selectionBox.dataset.jevanswerRoot = "selection";
+  if (event.button !== 0 || isEditable(event.target) || isExtensionNode(event.target)) return; event.preventDefault(); start = { x: event.clientX, y: event.clientY };
+  selectionBox = document.createElement("div"); selectionBox.dataset.jevSwotRoot = "selection";
   Object.assign(selectionBox.style, { position: "fixed", zIndex: "2147483646", border: "2px solid #3b82f6", background: "#3b82f622", pointerEvents: "none" });
   document.documentElement.append(selectionBox); document.addEventListener("pointermove", move, true); document.addEventListener("pointerup", up, true);
 }
@@ -43,12 +43,12 @@ function cleanup() { selecting = false; selectionBox?.remove(); selectionBox = n
 async function analyze(question: ExtractedQuestion, visionConsent?: "allow" | "deny", captureAuthorized = lastCaptureAuthorized) {
   lastCaptureAuthorized = captureAuthorized;
   cancelActive(); const sequence = ++analysisSequence, requestId = crypto.randomUUID(); activeRequestId = requestId; overlay.loading(question);
-  const response = await chrome.runtime.sendMessage({ type: "ANALYZE", requestId, question, devicePixelRatio: window.devicePixelRatio, visionConsent, captureAuthorized }) as WorkerResponse;
+  const response = await chrome.runtime.sendMessage({ type: "ANALYZE", requestId, question, devicePixelRatio: window.devicePixelRatio, visionConsent, captureAuthorized }).catch((error: unknown) => ({ ok: false, code: "UNEXPECTED", message: error instanceof Error ? error.message : "扩展后台暂时不可用，请重试。", recoverable: true })) as WorkerResponse;
   if (sequence === analysisSequence) { activeRequestId = undefined; overlay.show(response); }
 }
 function explain(question: ExtractedQuestion, probability: ProbabilityResult) {
   explanationPort?.disconnect(); overlay.explanation("");
-  const port = chrome.runtime.connect({ name: "jevanswer-explanation" }); explanationPort = port;
+  const port = chrome.runtime.connect({ name: "jev-swot-explanation" }); explanationPort = port;
   port.onMessage.addListener((message: { type: string; chunk?: string; message?: string }) => {
     if (message.type === "chunk") overlay.explanationChunk(message.chunk ?? "");
     if (message.type === "error") overlay.explanation(`解析失败：${message.message ?? "未知错误"}`);
@@ -60,4 +60,5 @@ function cancelActive() {
   if (activeRequestId) { void chrome.runtime.sendMessage({ type: "CANCEL", requestId: activeRequestId }); activeRequestId = undefined; }
   explanationPort?.disconnect(); explanationPort = undefined;
 }
-function isEditable(target: EventTarget | null) { return target instanceof Element && !!target.closest("input,textarea,select,[contenteditable=true]"); }
+function isEditable(target: EventTarget | null) { return target instanceof Element && (!!target.closest("input,textarea,select,[contenteditable]:not([contenteditable=false])") || document.designMode === "on"); }
+function isExtensionNode(target: EventTarget | null) { return target instanceof Element && !!target.closest("[data-jev-swot-root]"); }

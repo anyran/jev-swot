@@ -19,7 +19,7 @@ chrome.runtime.onMessage.addListener((request: WorkerRequest, sender, sendRespon
   return true;
 });
 chrome.runtime.onConnect.addListener((port) => {
-  if (port.name !== "jevanswer-explanation") return;
+  if (port.name !== "jev-swot-explanation") return;
   const controller = new AbortController();
   port.onDisconnect.addListener(() => controller.abort());
   port.onMessage.addListener((message: { question: ExtractedQuestion; probability: import("../shared/types").ProbabilityResult }) => {
@@ -48,10 +48,10 @@ async function handle(request: Exclude<WorkerRequest, { type: "OCR" | "CROP_IMAG
       const answer = await askJev(probe, secrets.typeSafeApiKey); results.push(`JEV：正常（${answer.model}）`);
     } else results.push("JEV：未配置密钥");
     if (secrets.llmApiKey) {
-      await structureOcrText("题目：2+2？ A. 3 B. 4", settings.llm, secrets.llmApiKey); results.push("文本模型：正常");
+      const structured = await structureOcrText("题目：2+2？ A. 3 B. 4", effectiveLlm(settings.llm, secrets), secrets.llmApiKey); await cacheCapabilities(secrets, undefined, structured.structuredOutputDetected); results.push(`文本模型：正常（结构化输出${structured.structuredOutputDetected === "supported" ? "支持" : "已兼容降级"}）`);
       if (settings.llm.vision !== "unsupported") {
-        try { await recognizeWithVision(request.imageDataUrl, settings.llm, secrets.llmApiKey); await setSecrets({ ...secrets, visionDetected: "supported" }); results.push("视觉模型：正常"); }
-        catch (error) { if (error instanceof LlmError && error.unsupportedVision) { await setSecrets({ ...secrets, visionDetected: "unsupported" }); results.push("视觉模型：不支持，将使用本地 OCR"); } else throw error; }
+        try { const vision = await recognizeWithVision(request.imageDataUrl, effectiveLlm(settings.llm, secrets), secrets.llmApiKey); await cacheCapabilities(secrets, "supported", vision.structuredOutputDetected); results.push("视觉模型：正常"); }
+        catch (error) { if (error instanceof LlmError && error.unsupportedVision) { await cacheCapabilities(secrets, "unsupported"); results.push("视觉模型：不支持，将使用本地 OCR"); } else throw error; }
       }
     } else results.push("普通模型：未配置密钥");
     return { ok: true, diagnostic: results.join("；") };
@@ -62,7 +62,7 @@ async function handle(request: Exclude<WorkerRequest, { type: "OCR" | "CROP_IMAG
   }
   const host = sender.tab?.url ? new URL(sender.tab.url).hostname : "";
   if (host && settings.disabledHosts.some((entry) => host === entry || host.endsWith(`.${entry}`))) {
-    return { ok: false, code: "SITE_DISABLED", message: "JevAnswer 已在此站点禁用。", recoverable: true };
+    return { ok: false, code: "SITE_DISABLED", message: "Jev 做题家已在此站点禁用。", recoverable: true };
   }
   const controller = new AbortController(); activeRequests.set(request.requestId, controller);
   let question = request.question;
@@ -98,15 +98,18 @@ async function recognizeFallback(base: ExtractedQuestion, screenshot: string, de
   const questionImage = cropped.imageDataUrl as string;
   if (allowVision && secrets.llmApiKey && settings.llm.vision !== "unsupported" && secrets.visionDetected !== "unsupported") {
     try {
-      let parsed: Partial<ExtractedQuestion>;
-      try { parsed = await recognizeWithVision(questionImage, settings.llm, secrets.llmApiKey, signal); }
+      let parsed: import("../core/llm").StructuredQuestionResult;
+      try { parsed = await recognizeWithVision(questionImage, effectiveLlm(settings.llm, secrets), secrets.llmApiKey, signal); }
       catch (error) {
+        if (signal.aborted) throw error;
         if (!(error instanceof LlmError) || !error.retryable) throw error;
-        parsed = await recognizeWithVision(questionImage, settings.llm, secrets.llmApiKey, signal);
+        parsed = await recognizeWithVision(questionImage, effectiveLlm(settings.llm, secrets), secrets.llmApiKey, signal);
       }
+      await cacheCapabilities(secrets, "supported", parsed.structuredOutputDetected);
       return { question: normalizeParsed(parsed, base, "vision", 0.9), preview: { imageDataUrl: questionImage, width: cropped.width, height: cropped.height, boxes: [] } };
     } catch (error) {
-      if ((error as Error & { unsupportedVision?: boolean }).unsupportedVision) await setSecrets({ ...secrets, visionDetected: "unsupported" });
+      if (signal.aborted) throw error;
+      if ((error as Error & { unsupportedVision?: boolean }).unsupportedVision) await cacheCapabilities(secrets, "unsupported");
     }
   }
   const ocr = await chrome.runtime.sendMessage({ type: "OCR", imageDataUrl: questionImage, rect: { x: 0, y: 0, width: cropped.width, height: cropped.height }, devicePixelRatio: 1, useWebGpu: settings.useWebGpu });
@@ -115,7 +118,7 @@ async function recognizeFallback(base: ExtractedQuestion, screenshot: string, de
   parsed.recognitionConfidence = ocr.confidence;
   parsed.warnings = [...new Set([...parsed.warnings, ...(ocr.warnings ?? [])])];
   if (secrets.llmApiKey) {
-    try { parsed = normalizeParsed(await structureOcrText(ocr.text, settings.llm, secrets.llmApiKey, signal), parsed, "local-ocr", ocr.confidence); } catch { /* keep deterministic parse */ }
+    try { const structured = await structureOcrText(ocr.text, effectiveLlm(settings.llm, secrets), secrets.llmApiKey, signal); await cacheCapabilities(secrets, undefined, structured.structuredOutputDetected); parsed = normalizeParsed(structured, parsed, "local-ocr", ocr.confidence); } catch { /* keep deterministic parse */ }
   }
   attachOcrRects(parsed, ocr.boxes ?? [], base.sourceRect, cropped.width, cropped.height);
   return { question: parsed, preview: { imageDataUrl: questionImage, width: cropped.width, height: cropped.height, boxes: ocr.boxes ?? [] } };
@@ -132,11 +135,32 @@ function attachOcrRects(question: ExtractedQuestion, boxes: Array<{ x: number; y
 }
 
 function normalizeParsed(parsed: Partial<ExtractedQuestion>, base: ExtractedQuestion, source: "vision" | "local-ocr", confidence: number): ExtractedQuestion {
-  const options = (parsed.options ?? []).map((x, i) => ({ id: stableOptionId(i), label: x.label || String.fromCharCode(65 + i), text: x.text, confidence: x.confidence }));
-  const warnings = [...(parsed.warnings ?? [])];
-  if (parsed.visualDependency) warnings.push("POSSIBLE_DIAGRAM");
-  if (source === "local-ocr" && parsed.visualDependency) warnings.push("VISION_MODEL_REQUIRED");
-  return { ...base, source, questionType: parsed.questionType ?? "unknown", stem: parsed.stem?.trim() ?? "", context: parsed.context ?? "", options, recognitionConfidence: confidence, warnings: [...new Set(warnings)], visualDependency: parsed.visualDependency, visualDependencyReason: parsed.visualDependencyReason };
+  const candidateOptions = (parsed.options ?? []).filter((option) => option && typeof option.text === "string" && option.text.trim());
+  const options = (candidateOptions.length >= 2 ? candidateOptions : base.options).map((option, index) => ({
+    id: stableOptionId(index),
+    label: typeof option.label === "string" && option.label.trim() ? option.label.trim().toUpperCase() : String.fromCharCode(65 + index),
+    text: option.text.trim(),
+    confidence: option.confidence
+  }));
+  const visualDependency = parsed.visualDependency ?? base.visualDependency;
+  const visualDependencyReason = parsed.visualDependencyReason?.trim() || base.visualDependencyReason;
+  const contextParts = [parsed.context?.trim() || base.context?.trim() || ""];
+  if (visualDependencyReason && !contextParts[0].includes(visualDependencyReason)) contextParts.push(`视觉信息：${visualDependencyReason}`);
+  const warnings = [...base.warnings, ...(parsed.warnings ?? [])];
+  if (visualDependency) warnings.push("POSSIBLE_DIAGRAM");
+  if (source === "local-ocr" && visualDependency) warnings.push("VISION_MODEL_REQUIRED");
+  return {
+    ...base,
+    source,
+    questionType: parsed.questionType && parsed.questionType !== "unknown" ? parsed.questionType : base.questionType,
+    stem: parsed.stem?.trim() || base.stem,
+    context: contextParts.filter(Boolean).join("\n"),
+    options,
+    recognitionConfidence: confidence,
+    warnings: [...new Set(warnings)],
+    visualDependency,
+    visualDependencyReason
+  };
 }
 async function capture(windowId?: number): Promise<string> {
   return windowId == null ? chrome.tabs.captureVisibleTab({ format: "png" }) : chrome.tabs.captureVisibleTab(windowId, { format: "png" });
@@ -146,3 +170,10 @@ async function ensureOffscreen(): Promise<void> {
   await chrome.offscreen.createDocument({ url: "offscreen.html", reasons: [chrome.offscreen.Reason.BLOBS], justification: "Crop screenshots and run local PP-OCRv5 inference without blocking the web page" });
 }
 function failure(error: unknown): WorkerResponse { return { ok: false, code: "UNEXPECTED", message: error instanceof Error ? error.message : "发生未知错误", recoverable: true }; }
+function effectiveLlm(settings: import("../shared/types").LLMSettings, secrets: Awaited<ReturnType<typeof getSecrets>>) {
+  return settings.structuredOutput === "auto" && secrets.structuredOutputDetected && secrets.structuredOutputDetected !== "auto" ? { ...settings, structuredOutput: secrets.structuredOutputDetected } : settings;
+}
+async function cacheCapabilities(secrets: Awaited<ReturnType<typeof getSecrets>>, vision?: "supported" | "unsupported", structuredOutput?: "supported" | "unsupported") {
+  if (!vision && !structuredOutput) return;
+  await setSecrets({ ...secrets, ...(await getSecrets()), ...(vision ? { visionDetected: vision } : {}), ...(structuredOutput ? { structuredOutputDetected: structuredOutput } : {}) });
+}

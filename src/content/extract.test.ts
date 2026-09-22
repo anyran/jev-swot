@@ -35,4 +35,17 @@ describe("DOM extraction", () => {
     question.insertAdjacentHTML("afterbegin", '<img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==">');
     expect(extractFromElement(question).warnings).toContain("VISION_MODEL_REQUIRED");
   });
+  it("extracts table rows and infers explicit multi-select wording", () => {
+    document.body.innerHTML = `<section class="question"><h2>多选题：选择所有正确项</h2><table><tbody><tr><td>A.</td><td>甲</td></tr><tr><td>B.</td><td>乙</td></tr></tbody></table></section>`;
+    const question = extractFromElement(document.querySelector(".question")!);
+    expect(question.questionType).toBe("multiple");
+    expect(question.options.map((option) => option.text)).toEqual(["甲", "乙"]);
+  });
+  it("marks formula text without pretending it is image semantics", () => {
+    const element = document.querySelectorAll(".question")[0];
+    element.querySelector("h2")!.textContent = "sin(x) 的值是？";
+    const question = extractFromElement(element);
+    expect(question.warnings).toContain("POSSIBLE_FORMULA");
+    expect(question.warnings).not.toContain("VISION_MODEL_REQUIRED");
+  });
 });

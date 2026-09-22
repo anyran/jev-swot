@@ -8,7 +8,7 @@ const candidates = [process.env.CHROME_PATH, "/usr/bin/google-chrome", "/usr/bin
 let executablePath;
 for (const candidate of candidates) { try { await access(candidate); executablePath = candidate; break; } catch { /* try next */ } }
 if (!executablePath) throw new Error("Chrome/Chromium not found; set CHROME_PATH to run the extension smoke test.");
-const extensionPath = new URL("../dist/", import.meta.url).pathname, userDataDir = await mkdtemp(join(tmpdir(), "jevanswer-smoke-"));
+const extensionPath = new URL("../dist/", import.meta.url).pathname, userDataDir = await mkdtemp(join(tmpdir(), "jev-swot-smoke-"));
 let browser, server;
 try {
   browser = await puppeteer.launch({ executablePath, headless: true, userDataDir, enableExtensions: [extensionPath], args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-crash-reporter"] });
@@ -18,7 +18,7 @@ try {
   const page = await browser.newPage();
   await page.goto(`chrome-extension://${extensionId}/options.html`, { waitUntil: "domcontentloaded" });
   const title = await page.$eval("h1", (element) => element.textContent);
-  if (title !== "JevAnswer 设置") throw new Error(`Unexpected options title: ${title}`);
+  if (title !== "Jev 做题家设置 Jev SWOT") throw new Error(`Unexpected options title: ${title}`);
   const permissions = await page.evaluate(() => chrome.permissions.getAll());
   console.log(`Smoke: granted origins ${permissions.origins?.join(", ") ?? "none"}`);
   console.log("Smoke: options page ready; running packaged OCR");
@@ -36,10 +36,10 @@ try {
   const address = server.address(); if (!address || typeof address === "string") throw new Error("Failed to start smoke page");
   const questionPage = await browser.newPage(); await questionPage.goto(`http://127.0.0.1:${address.port}/`, { waitUntil: "networkidle0" });
   await questionPage.$eval("#choice-a", (element) => element.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, altKey: true })));
-  await questionPage.waitForSelector('[data-jevanswer-root="true"]', { timeout: 5_000 });
+  await questionPage.waitForSelector('[data-jev-swot-root="true"]', { timeout: 5_000 });
   const answerChanged = await questionPage.$eval('input[type="radio"]', (input) => input.checked);
   if (answerChanged) throw new Error("Extension modified the page answer during smoke test");
-  console.log(`Chrome loaded JevAnswer ${extensionId}; service worker, content interaction, options page, and packaged OCR are healthy (${Math.round(ocr.confidence * 100)}%, ${ocr.backend}).`);
+  console.log(`Chrome loaded Jev 做题家（Jev SWOT） ${extensionId}; service worker, content interaction, options page, and packaged OCR are healthy (${Math.round(ocr.confidence * 100)}%, ${ocr.backend}).`);
 } finally {
   await browser?.close();
   if (server) { server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); }
