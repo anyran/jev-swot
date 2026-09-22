@@ -77,4 +77,9 @@ describe("DOM extraction", () => {
     element.insertAdjacentHTML("afterbegin", '<img alt="结构图" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==">');
     expect(extractFromElement(element).warnings).toContain("VISION_MODEL_REQUIRED");
   });
+  it("treats an unlabelled canvas as a visual dependency", () => {
+    const element = document.querySelectorAll(".question")[0];
+    element.insertAdjacentHTML("afterbegin", '<canvas width="200" height="100"></canvas>');
+    expect(extractFromElement(element).warnings).toContain("VISION_MODEL_REQUIRED");
+  });
 });

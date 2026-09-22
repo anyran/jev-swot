@@ -2,7 +2,7 @@ import type { ExtractedQuestion, QuestionOption, RecognitionWarning } from "../s
 
 const EXCLUDED = "script,style,noscript,nav,header,footer,aside,iframe,[role='banner'],[role='navigation'],[role='complementary'],[hidden],[aria-hidden='true'],[data-jev-swot-root],[data-ad],[data-advertisement],[aria-label*='advertisement' i],[aria-label*='广告'],[class~='ad'],[class*=' ad-'],[class^='ad-'],[class*='advertisement' i],[id*='advertisement' i]";
 const VISUAL_CUE = /(?:如图|下图|图中|曲线|折线|柱状|散点|阴影|面积|图表|统计图|几何|化学(?:结构|式)|结构式|分子|坐标(?:系|轴)?|示意图|diagram|graph|figure|chart|plot|axis|geometry|chemical\s+structure|molecule)/i;
-const FORMULA_CUE = /[∑√∫≈≠≤≥^]|\b(?:sin|cos|tan|log)\b|\$[^$]+\$/i;
+const FORMULA_CUE = /[∑√∫≈≠≤≥±×÷∞∂∇∈∉∝→←↔^]|[⁰¹²³⁴⁵⁶⁷⁸⁹₀₁₂₃₄₅₆₇₈₉]|\b(?:sin|cos|tan|log|ln|lim)\b|\$[^$]+\$/i;
 const MULTIPLE_CUE = /(?:多选|可多选|选择所有|所有正确|select all|multiple choice)/i;
 const SINGLE_CUE = /(?:单选|只能选择一项|判断题|single choice|true or false)/i;
 function visible(element: Element): boolean {
@@ -75,8 +75,10 @@ export function extractFromElement(element: Element): ExtractedQuestion {
   const hasCheckboxRole = !!element.querySelector("[role=checkbox]");
   const hasRadioRole = !!element.querySelector("[role=radio]");
   const questionType = hasCheckbox || hasCheckboxRole ? "multiple" : hasRadio || hasRadioRole ? "single" : MULTIPLE_CUE.test(allText) ? "multiple" : SINGLE_CUE.test(allText) ? "single" : "unknown";
-  const imageContext = [...element.querySelectorAll("img,canvas,svg")].filter(visible).map((image) => image.getAttribute("alt") || image.getAttribute("aria-label") || image.getAttribute("title") || "").map(cleanText).filter(Boolean).join("\n");
-  const hasRelevantVisual = VISUAL_CUE.test(allText) && [...element.querySelectorAll("img,canvas,svg")].some(visible);
+  const visualElements = [...element.querySelectorAll("img,canvas,svg")].filter(visible);
+  const imageContext = visualElements.map((image) => image.getAttribute("alt") || image.getAttribute("aria-label") || image.getAttribute("title") || "").map(cleanText).filter(Boolean).join("\n");
+  const hasUnlabelledVisual = visualElements.some((image) => !cleanText(image.getAttribute("alt") || image.getAttribute("aria-label") || image.getAttribute("title") || ""));
+  const hasRelevantVisual = visualElements.length > 0 && (VISUAL_CUE.test(`${allText}\n${imageContext}`) || hasUnlabelledVisual);
   const warnings: RecognitionWarning[] = stem && options.length >= 2 ? [] : ["INCOMPLETE_OPTIONS"];
   if (FORMULA_CUE.test(allText)) warnings.push("POSSIBLE_FORMULA");
   if (hasRelevantVisual) warnings.push("POSSIBLE_DIAGRAM", "VISION_MODEL_REQUIRED");
