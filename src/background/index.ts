@@ -145,7 +145,12 @@ async function recognizeFallback(base: ExtractedQuestion, screenshot: string, de
       }
       await cacheCapabilities(settings.llm, secrets, "supported", parsed.structuredOutputDetected);
       if (signal.aborted) throw new Error("识别请求已取消。");
-      return { question: normalizeParsed(parsed, base, "vision", 0.9), preview: { imageDataUrl: questionImage, width: cropped.width, height: cropped.height, boxes: [] } };
+      const visionQuestion = normalizeParsed(parsed, base, "vision", 0.9);
+      // A successful HTTP response is not enough: malformed or incomplete
+      // vision JSON must continue through local OCR instead of silently
+      // surfacing an unstructured question for JEV.
+      if (!hasQuestionStructure(visionQuestion)) throw new LlmError("视觉模型未提取出完整题目，将改用本地 OCR。", undefined, false, false);
+      return { question: visionQuestion, preview: { imageDataUrl: questionImage, width: cropped.width, height: cropped.height, boxes: [] } };
     } catch (error) {
       if (signal.aborted) throw error;
       if ((error as Error & { unsupportedVision?: boolean }).unsupportedVision) await cacheCapabilities(settings.llm, secrets, "unsupported");
