@@ -78,7 +78,17 @@ try {
         void workerSession.send("Fetch.fulfillRequest", { requestId: event.requestId, responseCode: 200, responseHeaders: [{ name: "content-type", value: "application/json" }], body: Buffer.from(JSON.stringify({ choices: [{ message: { content: JSON.stringify(direct) } }] })).toString("base64") });
         return;
       }
-      const structured = { questionType: "single", stem: "Which number is even?", context: "", visualDependency: forceVisionMissingContext && isVisionRequest, visualDependencyReason: "", ...(forceStructuredMissingIgnored ? {} : { ignoredText: "Correct answer: B\nExplanation: even numbers are divisible by two" }), options: [{ label: "A", text: "3" }, { label: "B", text: "4 Correct answer: B" }] };
+      let ocrLineIds = ["line_1", "line_2", "line_3"];
+      if (!isVisionRequest && event.request.postData?.includes('"orderedText"')) {
+        try {
+          const outer = JSON.parse(event.request.postData);
+          const content = outer.messages?.[1]?.content;
+          const ocrPayload = typeof content === "string" ? JSON.parse(content) : undefined;
+          const ids = Array.isArray(ocrPayload?.lines) ? ocrPayload.lines.map((line) => line?.id).filter((id) => typeof id === "string") : [];
+          if (ids.length >= 3) ocrLineIds = ids.slice(0, 3);
+        } catch { /* keep deterministic smoke IDs when a provider reshapes the request */ }
+      }
+      const structured = { questionType: "single", stem: "Which number is even?", context: "", visualDependency: forceVisionMissingContext && isVisionRequest, visualDependencyReason: "", ...(forceStructuredMissingIgnored ? {} : { ignoredText: "Correct answer: B\nExplanation: even numbers are divisible by two", stemLineIds: [ocrLineIds[0]], optionLineIds: [ocrLineIds[1], ocrLineIds[2]], ignoredLineIds: [] }), options: [{ label: "A", text: "3" }, { label: "B", text: "4 Correct answer: B" }] };
       void workerSession.send("Fetch.fulfillRequest", { requestId: event.requestId, responseCode: 200, responseHeaders: [{ name: "content-type", value: "application/json" }], body: Buffer.from(JSON.stringify({ choices: [{ message: { content: JSON.stringify(structured) } }] })).toString("base64") });
     }
   });
@@ -87,6 +97,9 @@ try {
   await page.goto(`chrome-extension://${extensionId}/options.html`, { waitUntil: "domcontentloaded" });
   const title = await page.$eval("h1", (element) => element.textContent);
   if (title !== "Jev 做题家设置 Jev SWOT") throw new Error(`Unexpected options title: ${title}`);
+  const commands = await page.evaluate(() => chrome.commands.getAll());
+  if (!commands.some((command) => command.name === "select-question") || !commands.some((command) => command.name === "select-question-alt")) throw new Error(`Manifest commands are not registered: ${JSON.stringify(commands)}`);
+  console.log(`Smoke: commands registered ${commands.map((command) => `${command.name}=${command.shortcut || "unassigned"}`).join(", ")}`);
   const permissions = await page.evaluate(() => chrome.permissions.getAll());
   console.log(`Smoke: granted origins ${permissions.origins?.join(", ") ?? "none"}`);
   const setSmokeSecrets = async (secrets) => page.evaluate(async (value) => {

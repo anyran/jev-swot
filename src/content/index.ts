@@ -1,5 +1,6 @@
 import { elementFromRect, extractFromElement, findQuestionContainer } from "./extract";
 import { ResultOverlay } from "./overlay";
+import { isSelectionShortcut } from "./shortcut";
 import type { ExtractedQuestion, PersistentSettings, ProbabilityResult, RuntimeProgressMessage, WorkerResponse } from "../shared/types";
 
 // Keep the content script self-contained. Manifest V3 content scripts are classic
@@ -58,6 +59,15 @@ document.addEventListener("dblclick", (event) => {
     // The user must use the selection shortcut when a screenshot is needed.
     analyze(extractFromElement(findQuestionContainer(target)), undefined, false);
   });
+}, true);
+document.addEventListener("keydown", (event) => {
+  // Chrome may leave a suggested command unassigned when Ctrl/Command+Shift+Y
+  // conflicts with the browser or another extension.  Once this content
+  // script is present (persistent optional page access or an activeTab
+  // injection), keep the same gesture as a reliable in-page fallback.
+  if (!isSelectionShortcut(event) || isEditable(event.target) || isExtensionNode(event.target) || disabledForSite !== false) return;
+  event.preventDefault(); event.stopPropagation();
+  void whenSiteEnabled(() => { selectionCaptureAuthorized = true; startSelection(); });
 }, true);
 
 function startSelection() {

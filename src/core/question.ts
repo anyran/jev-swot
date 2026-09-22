@@ -1,7 +1,8 @@
-import type { ExtractedQuestion, QuestionOption, RecognitionWarning } from "../shared/types";
+import type { ExtractedQuestion, OcrTextBox, QuestionOption, RecognitionWarning } from "../shared/types";
 
-const OPTION_RE = /^\s*(?:(?:([A-Ha-h])(?:[.、)）:]|\s+))|(?:([1-9]\d{0,2})[.、)）:])|(?:([①②③④⑤⑥⑦⑧⑨])[.、)）:]))\s*(.+)$/;
-const MARKED_OPTION_RE = /^\s*(?:\[\s*[xX✓✔]?\s*\]|[☐☑□■○●◯◉◒✓✔])\s*(?:(?:([A-Ha-h])(?:[.、)）:]|\s+))|(?:([1-9]\d{0,2})[.、)）:])|(?:([①②③④⑤⑥⑦⑧⑨])[.、)）:]))?\s*(.+)$/u;
+const OPTION_RE = /^\s*(?:(?:([A-Ha-h])(?:[.．、)）:]|\s+))|(?:([1-9]\d{0,2})[.．、)）:])|(?:([①②③④⑤⑥⑦⑧⑨])[.．、)）:]))\s*(.+)$/;
+const MARKED_OPTION_RE = /^\s*(?:\[\s*[xX✓✔]?\s*\]|[☐☑□■○●◯◉◒✓✔])\s*(?:(?:([A-Ha-h])(?:[.．、)）:]|\s+))|(?:([1-9]\d{0,2})[.．、)）:])|(?:([①②③④⑤⑥⑦⑧⑨])[.．、)）:]))?\s*(.+)$/u;
+const INLINE_OPTION_BOUNDARY_RE = /(?<![☐☑□■○●◯◉◒✓✔])\s+(?=(?:[（(]?[A-Ha-h][）)]?[.．、)）:]|[1-9]\d{0,2}[.．、)）:]|[①②③④⑤⑥⑦⑧⑨][.．、)）:]))/gu;
 const FORMULA_RE = /[∑√∫≈≠≤≥±×÷∞∂∇∈∉∝→←↔^]|[⁰¹²³⁴⁵⁶⁷⁸⁹₀₁₂₃₄₅₆₇₈₉]|\b(?:sin|cos|tan|log|ln|lim)\b|\$[^$]+\$/i;
 const DIAGRAM_RE = /(?:如图|下图|图中|曲线|折线|柱状|散点|阴影|面积|图表|统计图|几何|化学(?:结构|式)|结构式|分子|坐标(?:系|轴)?|示意图|diagram|graph|figure|chart|plot|axis|geometry|chemical\s+structure|molecule)/i;
 const MULTIPLE_RE = /(?:多选|可多选|选择所有|所有正确|select all|multiple choice)/i;
@@ -12,25 +13,43 @@ export function stableOptionId(index: number): string { return `option_${index +
 export function fallbackOptionLabel(index: number): string { return index < 26 ? String.fromCharCode(65 + index) : String(index + 1); }
 
 /**
+ * OCR engines frequently return two-column choices on one physical line, or
+ * put a full-width parenthesized label in front of an option. Normalize those
+ * cases before the structural parser sees the text.
+ */
+export function splitOptionLines(text: string): string[] {
+  return text.split(/\r?\n/).flatMap((line) => {
+    const parts = line.split(INLINE_OPTION_BOUNDARY_RE).map((part) => part.trim()).filter(Boolean);
+    return parts.length ? parts : [line.trim()];
+  }).filter(Boolean);
+}
+
+/**
  * Parse one OCR/DOM line that may carry a conventional label or a checkbox /
  * radio glyph.  A glyph without an explicit label receives the next stable
  * fallback label so the caller can still present it for human confirmation.
  */
 export function parseOptionLine(line: string, index: number): { label: string; text: string } | undefined {
-  const match = OPTION_RE.exec(line);
-  const markedMatch = match ? undefined : MARKED_OPTION_RE.exec(line);
+  const normalized = line.replace(/^\s*[（(]([A-Ha-h])[）)]\s*/, "$1 ");
+  const match = OPTION_RE.exec(normalized);
+  const markedMatch = match ? undefined : MARKED_OPTION_RE.exec(normalized);
   if (match) return { label: match[1]?.toUpperCase() || match[2] || match[3]!, text: match[4] };
   if (markedMatch) return { label: markedMatch[1]?.toUpperCase() || markedMatch[2] || markedMatch[3] || fallbackOptionLabel(index), text: markedMatch[4] };
   return undefined;
 }
 
 export function parseQuestionText(text: string, rect = { x: 0, y: 0, width: 0, height: 0 }): ExtractedQuestion {
-  const lines = text.split(/\n+/).map((x) => x.trim()).filter(Boolean);
+  const lines = splitOptionLines(text);
   const options: QuestionOption[] = [];
   let firstOption = lines.length;
+  const stemLines: string[] = [];
   lines.forEach((line, index) => {
     const parsed = parseOptionLine(line, options.length);
-    if (!parsed) return;
+    if (!parsed) {
+      if (firstOption === lines.length) stemLines.push(line);
+      else if (!RESULT_ANNOTATION_RE.test(line) && options.length) options[options.length - 1].text = `${options[options.length - 1].text} ${line}`.trim();
+      return;
+    }
     firstOption = Math.min(firstOption, index);
     options.push({ id: stableOptionId(options.length), label: parsed.label, text: parsed.text });
   });
@@ -39,13 +58,75 @@ export function parseQuestionText(text: string, rect = { x: 0, y: 0, width: 0, h
     if (option.label === "4" && index === 0) option.label = "A";
     if (option.label === "8" && index === 1) option.label = "B";
   });
-  const stem = lines.slice(0, firstOption).join("\n");
+  const stem = stemLines.join("\n");
   const warnings: RecognitionWarning[] = [];
   if (!stem || options.length < 2) warnings.push("INCOMPLETE_OPTIONS");
   if (FORMULA_RE.test(text)) warnings.push("POSSIBLE_FORMULA");
   if (DIAGRAM_RE.test(text)) warnings.push("POSSIBLE_DIAGRAM");
   const questionType = MULTIPLE_RE.test(text) ? "multiple" : SINGLE_RE.test(text) ? "single" : "unknown";
   return { source: "local-ocr", questionType, stem, options, sourceRect: rect, recognitionConfidence: options.length >= 2 && stem ? 0.8 : 0.4, warnings };
+}
+
+export interface OcrLine {
+  id: string;
+  text: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  confidence: number;
+  boxes: OcrTextBox[];
+}
+
+/**
+ * Reconstruct visual rows from PP-OCR boxes.  Passing each detected box as a
+ * separate newline loses the distinction between a label and its option text
+ * (for example, `A.` and `3`), which is the most common source of bad OCR
+ * question boundaries.
+ */
+export function groupOcrBoxes(boxes: OcrTextBox[]): OcrLine[] {
+  type Row = { boxes: OcrTextBox[]; top: number; bottom: number; center: number };
+  const rows: Row[] = [];
+  for (const box of [...boxes].filter((item) => item.text.trim()).sort((left, right) => left.y - right.y || left.x - right.x)) {
+    const top = box.y, bottom = box.y + box.height, center = (top + bottom) / 2;
+    let target: Row | undefined;
+    let bestDistance = Infinity;
+    for (const row of rows) {
+      const overlap = Math.min(bottom, row.bottom) - Math.max(top, row.top);
+      const minHeight = Math.min(box.height, row.bottom - row.top);
+      const distance = Math.abs(center - row.center);
+      if (overlap >= minHeight * 0.35 || distance <= Math.max(box.height, row.bottom - row.top) * 0.45) {
+        if (distance < bestDistance) { target = row; bestDistance = distance; }
+      }
+    }
+    if (!target) rows.push({ boxes: [box], top, bottom, center });
+    else {
+      target.boxes.push(box);
+      target.top = Math.min(target.top, top);
+      target.bottom = Math.max(target.bottom, bottom);
+      target.center = (target.top + target.bottom) / 2;
+    }
+  }
+  return rows.sort((left, right) => left.top - right.top).map((row, index) => {
+    const ordered = row.boxes.sort((left, right) => left.x - right.x);
+    const text = ordered.reduce((result, box, boxIndex) => {
+      if (boxIndex === 0) return box.text.trim();
+      const previous = ordered[boxIndex - 1].text.trim();
+      return `${result}${ocrFragmentSeparator(previous, box.text, box.x - (ordered[boxIndex - 1].x + ordered[boxIndex - 1].width), Math.max(box.height, ordered[boxIndex - 1].height))}${box.text.trim()}`;
+    }, "").trim();
+    const x = Math.min(...ordered.map((box) => box.x)), right = Math.max(...ordered.map((box) => box.x + box.width));
+    const confidence = ordered.reduce((sum, box) => sum + box.confidence, 0) / ordered.length;
+    return { id: `line_${index + 1}`, text, x, y: row.top, width: right - x, height: row.bottom - row.top, confidence, boxes: ordered };
+  });
+}
+
+function ocrFragmentSeparator(previous: string, next: string, gap: number, height: number): string {
+  if (!previous || !next) return "";
+  if (/^[.．、)）:：,，]$/.test(next) || /^[([{（「『]$/.test(next)) return "";
+  if (/^[A-Ha-h]$|^\d{1,3}$/.test(previous) || /^[A-Ha-h]$|^\d{1,3}$/.test(next)) return " ";
+  if (/[A-Za-z0-9]$/.test(previous) && /^[A-Za-z0-9]/.test(next)) return " ";
+  if (gap > height * 0.65 && !/^[\u3400-\u9fff]/.test(next)) return " ";
+  return "";
 }
 
 export function validateQuestion(question: ExtractedQuestion): string[] {

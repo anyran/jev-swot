@@ -8,11 +8,12 @@ const SINGLE_CUE = /(?:单选|只能选择一项|判断题|single choice|true or
 // Keep this tiny parser local: the content entry must remain a classic,
 // self-contained MV3 script.  It mirrors core/question.ts, which is used by
 // OCR and the background worker.
-const OPTION_RE = /^\s*(?:(?:([A-Ha-h])(?:[.、)）:]|\s+))|(?:([1-9]\d{0,2})[.、)）:])|(?:([①②③④⑤⑥⑦⑧⑨])[.、)）:]))\s*(.+)$/;
-const MARKED_OPTION_RE = /^\s*(?:\[\s*[xX✓✔]?\s*\]|[☐☑□■○●◯◉◒✓✔])\s*(?:(?:([A-Ha-h])(?:[.、)）:]|\s+))|(?:([1-9]\d{0,2})[.、)）:])|(?:([①②③④⑤⑥⑦⑧⑨])[.、)）:]))?\s*(.+)$/u;
+const OPTION_RE = /^\s*(?:(?:([A-Ha-h])(?:[.．、)）:]|\s+))|(?:([1-9]\d{0,2})[.．、)）:])|(?:([①②③④⑤⑥⑦⑧⑨])[.．、)）:]))\s*(.+)$/;
+const MARKED_OPTION_RE = /^\s*(?:\[\s*[xX✓✔]?\s*\]|[☐☑□■○●◯◉◒✓✔])\s*(?:(?:([A-Ha-h])(?:[.．、)）:]|\s+))|(?:([1-9]\d{0,2})[.．、)）:])|(?:([①②③④⑤⑥⑦⑧⑨])[.．、)）:]))?\s*(.+)$/u;
 function fallbackOptionLabel(index: number): string { return index < 26 ? String.fromCharCode(65 + index) : String(index + 1); }
 function parseOptionLine(line: string, index: number): { label: string; text: string } | undefined {
-  const match = OPTION_RE.exec(line), markedMatch = match ? undefined : MARKED_OPTION_RE.exec(line);
+  const normalized = line.replace(/^\s*[（(]([A-Ha-h])[）)]\s*/, "$1 ");
+  const match = OPTION_RE.exec(normalized), markedMatch = match ? undefined : MARKED_OPTION_RE.exec(normalized);
   if (match) return { label: match[1]?.toUpperCase() || match[2] || match[3]!, text: match[4] };
   if (markedMatch) return { label: markedMatch[1]?.toUpperCase() || markedMatch[2] || markedMatch[3] || fallbackOptionLabel(index), text: markedMatch[4] };
   return undefined;
@@ -70,6 +71,17 @@ function visibleText(element: Element, clip?: { x: number; y: number; width: num
   return cleanText(element.getAttribute("aria-label") || element.getAttribute("title") || "");
 }
 
+function visibleTextExcept(element: Element, excluded: Element[], clip?: { x: number; y: number; width: number; height: number }): string {
+  const pieces: string[] = [], walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+  let node: Node | null;
+  while ((node = walker.nextNode())) {
+    const parent = node.parentElement;
+    if (!parent || excluded.some((candidate) => candidate !== element && candidate.contains(parent)) || parent.closest(EXCLUDED) || !visible(parent) || !textIntersects(node, clip)) continue;
+    const value = node.textContent?.trim(); if (value) pieces.push(value);
+  }
+  return cleanText(pieces.join("\n"));
+}
+
 export function findQuestionContainer(start: Element): Element {
   let current: Element | null = start;
   let best = start;
@@ -105,8 +117,8 @@ export function extractFromElement(element: Element, clip?: { x: number; y: numb
     return { id: `option_${index + 1}`, label: parsed?.label ?? fallbackOptionLabel(index), text: parsed?.text || raw };
   }).filter((x) => x.text);
   const allText = visibleText(element, clip);
-  let stem = allText;
-  for (const option of options) {
+  let stem = visibleTextExcept(element, dedup, clip) || allText;
+  if (stem === allText) for (const option of options) {
     const position = stem.indexOf(option.text);
     if (position > 0) { stem = stem.slice(0, position); break; }
   }

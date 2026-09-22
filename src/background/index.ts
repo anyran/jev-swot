@@ -1,7 +1,7 @@
 import { askJev } from "../core/typesafe";
 import { LlmError, answerWithLlm, explainAnswer, recognizeWithVision, streamExplanation, structureOcrText } from "../core/llm";
 import { hasQuestionTextConflict, parseQuestionText, requiresRecognitionFallback, sanitizeDomQuestion, validateQuestion } from "../core/question";
-import { hasStructuredQuestionFields, normalizeParsed } from "../core/recognition";
+import { hasOcrBoundaryEvidence, hasStructuredQuestionFields, normalizeParsed } from "../core/recognition";
 import { getSecrets, getSettings, setSecrets } from "../shared/storage";
 import type { ExtractedQuestion, RecognitionPreview, WorkerRequest, WorkerResponse } from "../shared/types";
 
@@ -34,7 +34,7 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 });
 
 chrome.commands.onCommand.addListener(async (command, tab) => {
-  if (command === "select-question" && tab?.id) await startSelection(tab);
+  if ((command === "select-question" || command === "select-question-alt") && tab?.id) await startSelection(tab);
 });
 chrome.action.onClicked.addListener(async (tab) => {
   if (tab.id) await startSelection(tab);
@@ -295,8 +295,8 @@ async function recognizeFallback(base: ExtractedQuestion, screenshot: string, de
       const structured = await structureOcrText(ocr.text, llm, secrets.llmApiKey, signal, ocr.boxes ?? []);
       await cacheCapabilities(settings.llm, secrets, undefined, structured.structuredOutputDetected);
       excludedText = typeof structured.ignoredText === "string" ? structured.ignoredText.trim() : "";
-      parsed = normalizeParsed(structured, parsed, "local-ocr", ocr.confidence);
-      if (!hasStructuredQuestionFields(structured)) parsed.warnings.push("STRUCTURE_REVIEW_REQUIRED");
+      parsed = normalizeParsed(structured, parsed, "local-ocr", ocr.confidence, ocr.boxes ?? []);
+      if (!hasStructuredQuestionFields(structured, true) || !hasOcrBoundaryEvidence(structured, ocr.boxes ?? [])) parsed.warnings.push("STRUCTURE_REVIEW_REQUIRED");
     } catch (error) {
       if (signal.aborted) throw error;
       parsed.warnings.push("STRUCTURE_REVIEW_REQUIRED");

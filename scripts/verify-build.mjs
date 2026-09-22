@@ -15,6 +15,8 @@ if (manifest.background?.service_worker !== "assets/background.js" || manifest.b
 if (manifest.options_page !== "options.html" || manifest.content_scripts?.length) throw new Error("dist manifest must use dynamic content-script registration for optional page access");
 const shortcut = manifest.commands?.["select-question"];
 if (shortcut?.suggested_key?.default !== "Ctrl+Shift+Y" || shortcut?.suggested_key?.mac !== "Command+Shift+Y") throw new Error("dist manifest shortcut defaults are out of date");
+const alternateShortcut = manifest.commands?.["select-question-alt"];
+if (alternateShortcut?.suggested_key?.default !== "Alt+Shift+Y" || alternateShortcut?.suggested_key?.mac !== "Command+Shift+U") throw new Error("dist manifest alternate shortcut defaults are out of date");
 if (!String(manifest.content_security_policy?.extension_pages ?? "").includes("wasm-unsafe-eval")) throw new Error("dist manifest CSP does not allow the bundled ONNX WASM runtime");
 for (const [locale, expectedName, expectedDescription] of [["zh_CN", "Jev 做题家", "Jev SWOT"], ["en", "Jev SWOT", "Jev SWOT"]]) {
   const messages = JSON.parse(await readFile(new URL(`../dist/_locales/${locale}/messages.json`, import.meta.url), "utf8"));

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fallbackOptionLabel, hasQuestionStructure, hasQuestionTextConflict, parseQuestionText, requiresRecognitionFallback, sanitizeDomQuestion, stripExcludedText, validateQuestion } from "./question";
+import { fallbackOptionLabel, groupOcrBoxes, hasQuestionStructure, hasQuestionTextConflict, parseQuestionText, requiresRecognitionFallback, sanitizeDomQuestion, splitOptionLines, stripExcludedText, validateQuestion } from "./question";
 
 describe("question parsing", () => {
   it("parses labelled options", () => {
@@ -12,6 +12,16 @@ describe("question parsing", () => {
     const q = parseQuestionText("哪个数字是偶数？\nA 3\nB 4");
     expect(q.stem).toBe("哪个数字是偶数？");
     expect(q.options.map((x) => x.text)).toEqual(["3", "4"]);
+  });
+  it("normalizes parenthesized labels and two-column inline choices", () => {
+    const q = parseQuestionText("哪个数字是偶数？ (A) 3 (B) 4");
+    expect(splitOptionLines("哪个数字是偶数？ A. 3 B. 4")).toEqual(["哪个数字是偶数？", "A. 3", "B. 4"]);
+    expect(q.options.map((option) => [option.label, option.text])).toEqual([["A", "3"], ["B", "4"]]);
+  });
+  it("keeps wrapped option text attached to the preceding option", () => {
+    const q = parseQuestionText("题干\nA. 第一行\n选项补充\nB. 第二项");
+    expect(q.stem).toBe("题干");
+    expect(q.options.map((option) => option.text)).toEqual(["第一行 选项补充", "第二项"]);
   });
   it("splits checkbox and radio glyph options from OCR text", () => {
     const q = parseQuestionText("请选择所有偶数（多选）\n☐ A. 2\n☑ B. 3\n○ C. 4");
@@ -103,5 +113,26 @@ describe("question parsing", () => {
   it("does not rewrite user-edited question text", () => {
     const question = { ...parseQuestionText("答案：B\nA. 3\nB. 4"), source: "user-edited" as const };
     expect(sanitizeDomQuestion(question)).toEqual(question);
+  });
+});
+
+describe("OCR line grouping", () => {
+  it("joins a separated option label and value into one reading line", () => {
+    const lines = groupOcrBoxes([
+      { x: 4, y: 10, width: 14, height: 18, text: "A.", confidence: .9 },
+      { x: 24, y: 11, width: 18, height: 17, text: "3", confidence: .8 },
+      { x: 4, y: 42, width: 14, height: 18, text: "B.", confidence: .9 },
+      { x: 24, y: 43, width: 18, height: 17, text: "4", confidence: .8 }
+    ]);
+    expect(lines.map((line) => line.text)).toEqual(["A. 3", "B. 4"]);
+  });
+  it("keeps punctuation attached when OCR splits a label into characters", () => {
+    const lines = groupOcrBoxes([
+      { x: 4, y: 10, width: 8, height: 18, text: "A", confidence: .9 },
+      { x: 14, y: 10, width: 4, height: 18, text: ".", confidence: .9 },
+      { x: 24, y: 10, width: 18, height: 18, text: "3", confidence: .8 }
+    ]);
+    expect(lines[0]?.text).toBe("A. 3");
+    expect(parseQuestionText(lines[0]?.text ?? "").options.map((option) => option.text)).toEqual(["3"]);
   });
 });

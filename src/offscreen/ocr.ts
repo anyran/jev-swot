@@ -1,5 +1,5 @@
 import * as ort from "onnxruntime-web/webgpu";
-import { inferVisualWarnings, parseOptionLine } from "../core/question";
+import { groupOcrBoxes, inferVisualWarnings, parseOptionLine } from "../core/question";
 import type { DOMRectLike, RecognitionWarning } from "../shared/types";
 
 interface Point { x: number; y: number }
@@ -111,7 +111,7 @@ export class PaddleOcr {
       batchBoxes.forEach((box, index) => { const decoded = decodeCtc(outputTensor, this.dictionary!, index); if (decoded.text) results.push({ ...box, text: decoded.text, confidence: box.confidence * decoded.confidence, lowConfidenceRatio: decoded.lowConfidenceRatio }); });
     }
     results.splice(0, results.length, ...sortTextBoxes(results));
-    const text = results.map((x) => x.text).join("\n");
+    const text = groupOcrBoxes(results).map((line) => line.text).join("\n");
     const averageConfidence = results.length ? results.reduce((sum, x) => sum + x.confidence, 0) / results.length : 0;
     const lowConfidenceRatio = results.length ? results.reduce((sum, x) => sum + (x.lowConfidenceRatio ?? 1), 0) / results.length : 1;
     const textArea = results.reduce((sum, x) => sum + x.width * x.height, 0) / Math.max(1, crop.width * crop.height);
