@@ -26,12 +26,13 @@ npm run build
 
 ## 本地 OCR 资产
 
-OCR 运行时已实现，但二进制模型不提交到 Git。按照
-[`public/models/README.md`](public/models/README.md) 放置固定版本的检测、识别模型与
-字典，在 `model-manifest.json` 写入审计过的 SHA-256 后执行：
+OCR 运行时已实现，但二进制模型不提交到 Git。以下命令从 PaddlePaddle 官方
+Hugging Face 仓库的固定 revision 获取检测、识别模型及字典并校验 SHA-256：
 
 ```bash
+npm run models:fetch
 npm run verify:models
+npm run build
 ```
 
 缺少模型时，DOM 与视觉模型识别仍可使用；本地 OCR 会显示可恢复错误，不会静默

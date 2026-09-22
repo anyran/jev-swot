@@ -1,4 +1,4 @@
-import * as ort from "onnxruntime-web/wasm";
+import * as ort from "onnxruntime-web/webgpu";
 import { inferVisualWarnings } from "../core/question";
 import type { DOMRectLike, RecognitionWarning } from "../shared/types";
 
@@ -9,21 +9,26 @@ export class PaddleOcr {
   private detector?: ort.InferenceSession;
   private recognizer?: ort.InferenceSession;
   private dictionary?: string[];
-  async initialize(): Promise<void> {
+  async initialize(useWebGpu = false): Promise<void> {
     if (this.detector) return;
-    ort.env.wasm.wasmPaths = chrome.runtime.getURL("assets/");
     const [dictResponse] = await Promise.all([fetch(chrome.runtime.getURL("models/ppocrv5-dict.txt"))]);
     if (!dictResponse.ok) throw new Error("PP-OCRv5 模型尚未安装；请参照 models/README.md 放置并校验模型资产。");
     this.dictionary = ["blank", ...(await dictResponse.text()).split(/\r?\n/).filter(Boolean), " "];
     try {
+      const executionProviders = useWebGpu && "gpu" in navigator ? ["webgpu", "wasm"] : ["wasm"];
       [this.detector, this.recognizer] = await Promise.all([
-        ort.InferenceSession.create(chrome.runtime.getURL("models/ppocrv5-mobile-det.onnx"), { executionProviders: ["wasm"] }),
-        ort.InferenceSession.create(chrome.runtime.getURL("models/ppocrv5-mobile-rec.onnx"), { executionProviders: ["wasm"] })
+        ort.InferenceSession.create(chrome.runtime.getURL("models/ppocrv5-mobile-det.onnx"), { executionProviders }),
+        ort.InferenceSession.create(chrome.runtime.getURL("models/ppocrv5-mobile-rec.onnx"), { executionProviders })
       ]);
     } catch (error) { this.detector = undefined; throw new Error(`无法加载 PP-OCRv5：${error instanceof Error ? error.message : String(error)}`); }
   }
-  async recognize(dataUrl: string, rect: DOMRectLike, dpr: number): Promise<OcrResult> {
-    await this.initialize();
+  async recognize(dataUrl: string, rect: DOMRectLike, dpr: number, useWebGpu = false): Promise<OcrResult> {
+    try { await this.initialize(useWebGpu); }
+    catch (error) {
+      if (!useWebGpu) throw error;
+      this.detector = undefined; this.recognizer = undefined;
+      await this.initialize(false);
+    }
     const bitmap = await createImageBitmap(await (await fetch(dataUrl)).blob());
     const crop = cropBitmap(bitmap, rect, dpr);
     const detImage = resizeForDetection(crop);
@@ -78,7 +83,8 @@ function imageTensor(image: Uint8ClampedArray, width: number, height: number, mo
   const data = new Float32Array(3 * width * height);
   const mean = mode === "det" ? [0.485, 0.456, 0.406] : [0.5, 0.5, 0.5];
   const std = mode === "det" ? [0.229, 0.224, 0.225] : [0.5, 0.5, 0.5];
-  for (let i = 0; i < width * height; i++) for (let c = 0; c < 3; c++) data[c * width * height + i] = (image[i * 4 + c] / 255 - mean[c]) / std[c];
+  // PaddleOCR inference configs expect BGR while Canvas ImageData is RGBA.
+  for (let i = 0; i < width * height; i++) for (let c = 0; c < 3; c++) data[c * width * height + i] = (image[i * 4 + (2 - c)] / 255 - mean[c]) / std[c];
   return new ort.Tensor("float32", data, [1, 3, height, width]);
 }
 function probabilityBoxes(data: Float32Array, dims: readonly number[], sx: number, sy: number): Box[] {

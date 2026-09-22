@@ -12,12 +12,12 @@ chrome.action.onClicked.addListener(async (tab) => {
 });
 
 chrome.runtime.onMessage.addListener((request: WorkerRequest, sender, sendResponse) => {
-  if (request.type === "OCR") return false;
+  if (request.type === "OCR" || request.type === "CROP_IMAGE") return false;
   void handle(request, sender).then(sendResponse).catch((error: unknown) => sendResponse(failure(error)));
   return true;
 });
 
-async function handle(request: Exclude<WorkerRequest, { type: "OCR" }>, sender: chrome.runtime.MessageSender): Promise<WorkerResponse> {
+async function handle(request: Exclude<WorkerRequest, { type: "OCR" | "CROP_IMAGE" }>, sender: chrome.runtime.MessageSender): Promise<WorkerResponse> {
   if (request.type === "CLEAR_SESSION") { await chrome.storage.session.clear(); return { ok: true }; }
   const settings = await getSettings();
   const secrets = await getSecrets();
@@ -40,16 +40,19 @@ async function handle(request: Exclude<WorkerRequest, { type: "OCR" }>, sender: 
 }
 
 async function recognizeFallback(base: ExtractedQuestion, screenshot: string, devicePixelRatio: number, settings: Awaited<ReturnType<typeof getSettings>>, secrets: Awaited<ReturnType<typeof getSecrets>>): Promise<ExtractedQuestion> {
+  await ensureOffscreen();
+  const cropped = await chrome.runtime.sendMessage({ type: "CROP_IMAGE", imageDataUrl: screenshot, rect: base.sourceRect, devicePixelRatio });
+  if (!cropped?.ok) throw new Error(cropped?.message ?? "截图裁切失败");
+  const questionImage = cropped.imageDataUrl as string;
   if (secrets.llmApiKey && settings.llm.vision !== "unsupported" && secrets.visionDetected !== "unsupported") {
     try {
-      const parsed = await recognizeWithVision(screenshot, settings.llm, secrets.llmApiKey);
+      const parsed = await recognizeWithVision(questionImage, settings.llm, secrets.llmApiKey);
       return normalizeParsed(parsed, base, "vision", 0.9);
     } catch (error) {
       if ((error as Error & { unsupportedVision?: boolean }).unsupportedVision) await setSecrets({ ...secrets, visionDetected: "unsupported" });
     }
   }
-  await ensureOffscreen();
-  const ocr = await chrome.runtime.sendMessage({ type: "OCR", imageDataUrl: screenshot, rect: base.sourceRect, devicePixelRatio });
+  const ocr = await chrome.runtime.sendMessage({ type: "OCR", imageDataUrl: questionImage, rect: { x: 0, y: 0, width: cropped.width, height: cropped.height }, devicePixelRatio: 1, useWebGpu: settings.useWebGpu });
   if (!ocr?.ok) throw new Error(ocr?.message ?? "本地 OCR 失败");
   let parsed = parseQuestionText(ocr.text, base.sourceRect);
   parsed.recognitionConfidence = ocr.confidence;
@@ -69,6 +72,6 @@ async function capture(windowId?: number): Promise<string> {
 }
 async function ensureOffscreen(): Promise<void> {
   if (await chrome.offscreen.hasDocument()) return;
-  await chrome.offscreen.createDocument({ url: "offscreen.html", reasons: [chrome.offscreen.Reason.WORKERS], justification: "Run local PP-OCRv5 inference without blocking the web page" });
+  await chrome.offscreen.createDocument({ url: "offscreen.html", reasons: [chrome.offscreen.Reason.BLOBS], justification: "Crop screenshots and run local PP-OCRv5 inference without blocking the web page" });
 }
 function failure(error: unknown): WorkerResponse { return { ok: false, code: "UNEXPECTED", message: error instanceof Error ? error.message : "发生未知错误", recoverable: true }; }

@@ -9,10 +9,10 @@ export default defineConfig({
     emptyOutDir: true,
     rollupOptions: {
       input: {
-        background: resolve(__dirname, "src/background/index.ts"),
-        content: resolve(__dirname, "src/content/index.ts"),
-        offscreen: resolve(__dirname, "offscreen.html"),
-        options: resolve(__dirname, "options.html")
+        background: resolve(import.meta.dirname, "src/background/index.ts"),
+        content: resolve(import.meta.dirname, "src/content/index.ts"),
+        offscreen: resolve(import.meta.dirname, "offscreen.html"),
+        options: resolve(import.meta.dirname, "options.html")
       },
       output: {
         entryFileNames: "assets/[name].js",

@@ -9,6 +9,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "check": "tsc -b --pretty false",
+    "models:fetch": "node scripts/fetch-models.mjs",
     "verify:models": "node scripts/verify-models.mjs"
   },
   "dependencies": {

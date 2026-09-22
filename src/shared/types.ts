@@ -43,7 +43,8 @@ export interface SessionSecrets { typeSafeApiKey?: string; llmApiKey?: string; v
 export type WorkerRequest =
   | { type: "ANALYZE"; question: ExtractedQuestion; screenshot?: string; devicePixelRatio?: number }
   | { type: "EXPLAIN"; question: ExtractedQuestion; probability: ProbabilityResult }
-  | { type: "OCR"; imageDataUrl: string; rect: DOMRectLike; devicePixelRatio: number }
+  | { type: "OCR"; imageDataUrl: string; rect: DOMRectLike; devicePixelRatio: number; useWebGpu?: boolean }
+  | { type: "CROP_IMAGE"; imageDataUrl: string; rect: DOMRectLike; devicePixelRatio: number }
   | { type: "CLEAR_SESSION" };
 
 export type WorkerResponse =
