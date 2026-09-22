@@ -7,11 +7,12 @@ export type RecognitionWarning =
   | "INCOMPLETE_OPTIONS"
   | "VISION_MODEL_REQUIRED"
   | "VISION_SERVICE_UNAVAILABLE"
-  | "DOM_OCR_CONFLICT";
+  | "DOM_OCR_CONFLICT"
+  | "STRUCTURE_REVIEW_REQUIRED";
 
 export interface DOMRectLike { x: number; y: number; width: number; height: number }
 export interface OcrTextBox extends DOMRectLike { text: string; confidence: number }
-export interface RecognitionPreview { imageDataUrl: string; width: number; height: number; boxes: OcrTextBox[] }
+export interface RecognitionPreview { imageDataUrl: string; width: number; height: number; boxes: OcrTextBox[]; excludedText?: string }
 export interface QuestionOption { id: string; label: string; text: string; confidence?: number; sourceRect?: DOMRectLike }
 export interface ExtractedQuestion {
   source: QuestionSource;

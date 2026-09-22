@@ -98,6 +98,9 @@ async function handle(request: Exclude<WorkerRequest, { type: "OCR" | "CROP_IMAG
       const recognized = await recognizeFallback(question, screenshot, request.devicePixelRatio ?? 1, settings, secrets, request.requestId, controller.signal, request.visionConsent !== "deny", (stage, message) => sendProgress(sender, request.requestId, stage, message));
       question = recognized.question; preview = recognized.preview;
     }
+    if (question.source === "local-ocr" && question.warnings.includes("STRUCTURE_REVIEW_REQUIRED")) {
+      return { ok: false, code: "STRUCTURE_REVIEW_REQUIRED", message: "普通模型未完成题目结构化。请在覆盖层中确认题干和选项，排除答案、解析或页面结果文字后再重试。", recoverable: true, question, preview };
+    }
     const errors = validateQuestion(question);
     if (errors.length) return { ok: false, code: "QUESTION_INCOMPLETE", message: `${errors.join("；")}。请在覆盖层中校正后重试。`, recoverable: true, question, preview };
     if (question.source === "local-ocr" && question.recognitionConfidence < settings.ocrThreshold) {
@@ -145,12 +148,13 @@ async function recognizeFallback(base: ExtractedQuestion, screenshot: string, de
       }
       await cacheCapabilities(settings.llm, secrets, "supported", parsed.structuredOutputDetected);
       if (signal.aborted) throw new Error("识别请求已取消。");
+      if (!hasStructuredQuestionFields(parsed)) throw new LlmError("视觉模型返回的题目结构不完整，将改用本地 OCR。", undefined, false, false);
       const visionQuestion = normalizeParsed(parsed, base, "vision", 0.9);
       // A successful HTTP response is not enough: malformed or incomplete
       // vision JSON must continue through local OCR instead of silently
       // surfacing an unstructured question for JEV.
       if (!hasQuestionStructure(visionQuestion)) throw new LlmError("视觉模型未提取出完整题目，将改用本地 OCR。", undefined, false, false);
-      return { question: visionQuestion, preview: { imageDataUrl: questionImage, width: cropped.width, height: cropped.height, boxes: [] } };
+      return { question: visionQuestion, preview: { imageDataUrl: questionImage, width: cropped.width, height: cropped.height, boxes: [], excludedText: parsed.ignoredText?.trim() || undefined } };
     } catch (error) {
       if (signal.aborted) throw error;
       if ((error as Error & { unsupportedVision?: boolean }).unsupportedVision) await cacheCapabilities(settings.llm, secrets, "unsupported");
@@ -171,11 +175,23 @@ async function recognizeFallback(base: ExtractedQuestion, screenshot: string, de
   const inheritedWarnings = base.warnings.filter((warning) => warning !== "INCOMPLETE_OPTIONS");
   parsed.warnings = [...new Set([...inheritedWarnings, ...parsed.warnings, ...(ocr.warnings ?? []), ...(visionFallbackWarning ? [visionFallbackWarning] : [])])];
   if (hasQuestionTextConflict(base, parsed)) parsed.warnings.push("DOM_OCR_CONFLICT");
+  let excludedText = "";
   if (secrets.llmApiKey) {
-    try { const structured = await structureOcrText(ocr.text, llm, secrets.llmApiKey, signal, ocr.boxes ?? []); await cacheCapabilities(settings.llm, secrets, undefined, structured.structuredOutputDetected); parsed = normalizeParsed(structured, parsed, "local-ocr", ocr.confidence); } catch { /* keep deterministic parse */ }
+    try {
+      const structured = await structureOcrText(ocr.text, llm, secrets.llmApiKey, signal, ocr.boxes ?? []);
+      await cacheCapabilities(settings.llm, secrets, undefined, structured.structuredOutputDetected);
+      excludedText = typeof structured.ignoredText === "string" ? structured.ignoredText.trim() : "";
+      parsed = normalizeParsed(structured, parsed, "local-ocr", ocr.confidence);
+      if (!hasStructuredQuestionFields(structured)) parsed.warnings.push("STRUCTURE_REVIEW_REQUIRED");
+    } catch {
+      parsed.warnings.push("STRUCTURE_REVIEW_REQUIRED");
+    }
+  } else {
+    parsed.warnings.push("STRUCTURE_REVIEW_REQUIRED");
   }
+  parsed.warnings = [...new Set(parsed.warnings)];
   attachOcrRects(parsed, ocr.boxes ?? [], base.sourceRect, cropped.width, cropped.height);
-  return { question: parsed, preview: { imageDataUrl: questionImage, width: cropped.width, height: cropped.height, boxes: ocr.boxes ?? [] } };
+  return { question: parsed, preview: { imageDataUrl: questionImage, width: cropped.width, height: cropped.height, boxes: ocr.boxes ?? [], excludedText: excludedText || undefined } };
 }
 
 function attachOcrRects(question: ExtractedQuestion, boxes: Array<{ x: number; y: number; width: number; height: number; text: string; confidence: number }>, sourceRect: ExtractedQuestion["sourceRect"], cropWidth: number, cropHeight: number) {
@@ -188,27 +204,33 @@ function attachOcrRects(question: ExtractedQuestion, boxes: Array<{ x: number; y
   }
 }
 
-function normalizeParsed(parsed: Partial<ExtractedQuestion>, base: ExtractedQuestion, source: "vision" | "local-ocr", confidence: number): ExtractedQuestion {
-  const candidateOptions = (Array.isArray(parsed.options) ? parsed.options : []).filter((option) => option && typeof option === "object" && typeof option.text === "string" && option.text.trim());
-  const options = (candidateOptions.length >= 2 ? candidateOptions : base.options).map((option, index) => ({
+function normalizeParsed(parsed: Partial<ExtractedQuestion> & { ignoredText?: string }, base: ExtractedQuestion, source: "vision" | "local-ocr", confidence: number): ExtractedQuestion {
+  const modelSuppliedOptions = Array.isArray(parsed.options);
+  const candidateOptions = (Array.isArray(parsed.options) ? parsed.options : [])
+    .filter((option) => option && typeof option === "object" && typeof option.text === "string")
+    .map((option) => ({ ...option, text: stripExcludedText(option.text, parsed.ignoredText) }))
+    .filter((option) => option.text);
+  const options = (modelSuppliedOptions ? candidateOptions : base.options).map((option, index) => ({
     id: stableOptionId(index),
     label: typeof option.label === "string" && option.label.trim() ? option.label.trim().toUpperCase() : fallbackOptionLabel(index),
     text: option.text.trim(),
     confidence: option.confidence
   }));
   const visualDependency = parsed.visualDependency === true || base.visualDependency === true;
-  const visualDependencyReason = typeof parsed.visualDependencyReason === "string" ? parsed.visualDependencyReason.trim() || base.visualDependencyReason : base.visualDependencyReason;
-  const contextParts = [typeof parsed.context === "string" ? parsed.context.trim() || base.context?.trim() || "" : base.context?.trim() || ""];
+  const visualDependencyReason = typeof parsed.visualDependencyReason === "string" ? stripExcludedText(parsed.visualDependencyReason, parsed.ignoredText) || base.visualDependencyReason : base.visualDependencyReason;
+  const contextParts = [typeof parsed.context === "string" ? stripExcludedText(parsed.context, parsed.ignoredText) : base.context?.trim() || ""];
   if (visualDependencyReason && !contextParts[0].includes(visualDependencyReason)) contextParts.push(`视觉信息：${visualDependencyReason}`);
   const warnings = [...base.warnings, ...(Array.isArray(parsed.warnings) ? parsed.warnings.filter(isRecognitionWarning) : [])];
+  if (modelSuppliedOptions && candidateOptions.length < 2) warnings.push("INCOMPLETE_OPTIONS");
+  if (typeof parsed.stem === "string" && !parsed.stem.trim()) warnings.push("INCOMPLETE_OPTIONS");
   if (visualDependency) warnings.push("POSSIBLE_DIAGRAM");
   if (source === "local-ocr" && visualDependency) warnings.push("VISION_MODEL_REQUIRED");
-  const questionType = parsed.questionType === "single" || parsed.questionType === "multiple" ? parsed.questionType : base.questionType;
+  const questionType = parsed.questionType === "single" || parsed.questionType === "multiple" || parsed.questionType === "unknown" ? parsed.questionType : base.questionType;
   return {
     ...base,
     source,
     questionType,
-    stem: typeof parsed.stem === "string" ? parsed.stem.trim() || base.stem : base.stem,
+    stem: typeof parsed.stem === "string" ? stripExcludedText(parsed.stem, parsed.ignoredText) : base.stem,
     context: contextParts.filter(Boolean).join("\n"),
     options,
     recognitionConfidence: confidence,
@@ -217,8 +239,25 @@ function normalizeParsed(parsed: Partial<ExtractedQuestion>, base: ExtractedQues
     visualDependencyReason
   };
 }
+function hasStructuredQuestionFields(parsed: import("../core/llm").StructuredQuestionResult): boolean {
+  return (parsed.questionType === "single" || parsed.questionType === "multiple" || parsed.questionType === "unknown")
+    && typeof parsed.stem === "string"
+    && Array.isArray(parsed.options)
+    && typeof parsed.context === "string"
+    && typeof parsed.visualDependency === "boolean"
+    && typeof parsed.visualDependencyReason === "string";
+}
+const RESULT_ANNOTATION_RE = /^(?:正确答案|参考答案|答案解析|解析|得分|得分情况|你的答案|作答结果|提交结果|判定结果)\s*[:：]/i;
+function stripExcludedText(value: string, ignoredText?: string): string {
+  const ignored = (ignoredText ?? "").split(/[\r\n；;]+/).map((fragment) => comparableModelText(fragment)).filter((fragment) => fragment.length >= 4);
+  return value.split(/\r?\n/).map((line) => line.trim()).filter((line) => {
+    const comparable = comparableModelText(line);
+    return !!comparable && !RESULT_ANNOTATION_RE.test(line) && !ignored.some((fragment) => comparable.includes(fragment));
+  }).join("\n").trim();
+}
+function comparableModelText(value: string): string { return value.toLocaleLowerCase().replace(/\s+/g, "").replace(/[，。！？、:：;；]+$/u, ""); }
 function isRecognitionWarning(value: unknown): value is ExtractedQuestion["warnings"][number] {
-  return value === "LOW_OCR_CONFIDENCE" || value === "POSSIBLE_FORMULA" || value === "POSSIBLE_DIAGRAM" || value === "INCOMPLETE_OPTIONS" || value === "VISION_MODEL_REQUIRED" || value === "VISION_SERVICE_UNAVAILABLE" || value === "DOM_OCR_CONFLICT";
+  return value === "LOW_OCR_CONFIDENCE" || value === "POSSIBLE_FORMULA" || value === "POSSIBLE_DIAGRAM" || value === "INCOMPLETE_OPTIONS" || value === "VISION_MODEL_REQUIRED" || value === "VISION_SERVICE_UNAVAILABLE" || value === "DOM_OCR_CONFLICT" || value === "STRUCTURE_REVIEW_REQUIRED";
 }
 async function capture(windowId?: number): Promise<string> {
   return windowId == null ? chrome.tabs.captureVisibleTab({ format: "png" }) : chrome.tabs.captureVisibleTab(windowId, { format: "png" });

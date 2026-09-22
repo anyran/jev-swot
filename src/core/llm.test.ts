@@ -6,6 +6,21 @@ const settings: LLMSettings = { baseUrl: "https://example.test/v1", model: "mode
 afterEach(() => vi.restoreAllMocks());
 describe("OpenAI-compatible structured output", () => {
   it("parses fenced JSON", () => expect(parseJsonObject("```json\n{\"stem\":\"q\"}\n```")).toMatchObject({ stem: "q" }));
+  it("asks the structure model to separate question text from results", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ questionType: "single", stem: "q", context: "", ignoredText: "正确答案：B；解析：…", options: [{ label: "A", text: "x" }, { label: "B", text: "y" }] }) } }] }), { status: 200 })));
+    await structureOcrText("题目\nA. x\nB. y\n正确答案：B\n解析：…", settings, "secret");
+    const body = JSON.parse((vi.mocked(fetch).mock.calls[0][1] as RequestInit).body as string);
+    expect(body.response_format.json_schema.schema.required).toContain("ignoredText");
+    expect(body.messages[0].content).toContain("正确答案");
+    expect(body.messages[0].content).toContain("不能放进 stem、options、context");
+  });
+  it("keeps model-reported excluded OCR text separate from the question", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ questionType: "single", stem: "q", context: "", ignoredText: "正确答案：B", options: [{ label: "A", text: "x" }, { label: "B", text: "y" }] }) } }] }), { status: 200 })));
+    const result = await structureOcrText("q\nA. x\nB. y\n正确答案：B", settings, "secret");
+    expect(result.ignoredText).toBe("正确答案：B");
+    expect(result.stem).toBe("q");
+    expect(result.options).toHaveLength(2);
+  });
   it("falls back from json_schema to json_object", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response("unsupported response_format json_schema", { status: 400 })).mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ questionType: "single", stem: "q", context: "", options: [{ label: "A", text: "x" }, { label: "B", text: "y" }] }) } }] }), { status: 200 })));
     const result = await structureOcrText("q A.x B.y", settings, "secret");

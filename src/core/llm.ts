@@ -5,7 +5,34 @@ export class LlmError extends Error {
 }
 function endpoint(baseUrl: string): string { return `${baseUrl.replace(/\/$/, "")}/chat/completions`; }
 function questionSchema() {
-  return { name: "question", strict: true, schema: { type: "object", additionalProperties: false, required: ["questionType", "stem", "options", "context", "visualDependency", "visualDependencyReason"], properties: { questionType: { enum: ["single", "multiple", "unknown"] }, stem: { type: "string" }, context: { type: "string" }, visualDependency: { type: "boolean" }, visualDependencyReason: { type: "string" }, options: { type: "array", minItems: 2, maxItems: 255, items: { type: "object", additionalProperties: false, required: ["label", "text"], properties: { label: { type: "string" }, text: { type: "string" } } } } } } };
+  return {
+    name: "question",
+    strict: true,
+    schema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["questionType", "stem", "options", "context", "visualDependency", "visualDependencyReason", "ignoredText"],
+      properties: {
+        questionType: { enum: ["single", "multiple", "unknown"] },
+        stem: { type: "string" },
+        context: { type: "string" },
+        visualDependency: { type: "boolean" },
+        visualDependencyReason: { type: "string" },
+        ignoredText: { type: "string" },
+        options: {
+          type: "array",
+          minItems: 0,
+          maxItems: 255,
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["label", "text"],
+            properties: { label: { type: "string" }, text: { type: "string" } }
+          }
+        }
+      }
+    }
+  };
 }
 async function call(settings: LLMSettings, apiKey: string, body: object, signal?: AbortSignal): Promise<Response> {
   if (signal?.aborted) throw new LlmError("模型请求已取消。", undefined, false, false);
@@ -22,7 +49,11 @@ async function call(settings: LLMSettings, apiKey: string, body: object, signal?
   } finally { clearTimeout(timeout); signal?.removeEventListener("abort", abort); }
 }
 type Message = { role: string; content: unknown };
-export type StructuredQuestionResult = Partial<ExtractedQuestion> & { structuredOutputDetected?: "supported" | "unsupported" };
+export type StructuredQuestionResult = Partial<ExtractedQuestion> & {
+  structuredOutputDetected?: "supported" | "unsupported";
+  /** Raw OCR fragments the model intentionally excluded from the question. */
+  ignoredText?: string;
+};
 async function structuredQuestion(messages: Message[], settings: LLMSettings, apiKey: string, signal?: AbortSignal, visionRequest = false): Promise<StructuredQuestionResult> {
   const formats: Array<object | undefined> = settings.structuredOutput === "unsupported" ? [{ type: "json_object" }, undefined] : [{ type: "json_schema", json_schema: questionSchema() }, { type: "json_object" }, undefined];
   let lastError: LlmError | undefined;
@@ -45,10 +76,10 @@ async function structuredQuestion(messages: Message[], settings: LLMSettings, ap
   throw lastError ?? new LlmError("模型未返回有效题目结构。");
 }
 export async function recognizeWithVision(imageDataUrl: string, settings: LLMSettings, apiKey: string, signal?: AbortSignal): Promise<StructuredQuestionResult> {
-  return structuredQuestion([{ role: "system", content: "从题目截图中忠实提取题干和选项。不要解题，不要补充看不见的内容。如果作答依赖图表、几何图、化学结构、公式排版或其他非文字视觉信息，visualDependency 必须为 true，visualDependencyReason 简述原因，并在 context 中客观、完整地描述解题所需的可见关系、标注和数值，供后续判断模型使用。只输出 JSON。" }, { role: "user", content: [{ type: "text", text: "提取这道题及作答所需的视觉信息。" }, { type: "image_url", image_url: { url: imageDataUrl } }] }], settings, apiKey, signal, true);
+  return structuredQuestion([{ role: "system", content: "先确定题目边界，再忠实提取题干、选项和必要上下文；不要解题，不要补充看不见的内容。页面截图可能同时包含题号、导航、广告、用户已选答案、正确答案、答案解析、得分、对错标记或其他结果文字：这些都不是题目，不能复制到 stem、options 或 context，逐段放入 ignoredText。若截图中只有结果/解析而没有完整题目，应返回 questionType=unknown、缺失的题干或选项，不要臆造。若作答依赖图表、几何图、化学结构、公式排版或其他非文字视觉信息，visualDependency 必须为 true，visualDependencyReason 简述原因，并在 context 中客观、完整地描述解题所需的可见关系、标注和数值，供后续判断模型使用。只输出 JSON。" }, { role: "user", content: [{ type: "text", text: "识别题目结构，明确排除答案、解析和页面结果文字，并记录必要的视觉信息。" }, { type: "image_url", image_url: { url: imageDataUrl } }] }], settings, apiKey, signal, true);
 }
 export async function structureOcrText(text: string, settings: LLMSettings, apiKey: string, signal?: AbortSignal, boxes: OcrTextBox[] = []): Promise<StructuredQuestionResult> {
-  return structuredQuestion([{ role: "system", content: "将 OCR 文本及其坐标忠实整理为题目结构。按文本框的 y/x 坐标恢复阅读顺序，不要解题或改写内容。visualDependency 设为 false，visualDependencyReason 设为空字符串。只输出 JSON。" }, { role: "user", content: JSON.stringify({ text, boxes }) }], settings, apiKey, signal);
+  return structuredQuestion([{ role: "system", content: "你是 OCR 后的题目结构化器，不是答题器。第一步先判断题目边界；按文本框的 y/x 坐标恢复阅读顺序，只保留题干、选项和与题目直接相关的上下文。OCR 原文可能混入页眉页脚、题号、导航、广告、用户作答、正确答案、答案、解析、得分、对错标记、提交结果或其他旁题内容：这些全部排除，不能放进 stem、options、context，并把被排除的原文片段写入 ignoredText，便于人工复核。不要解题、不要改写选项、不要把推测内容当成 OCR 结果。若题目边界或选项不完整，返回 questionType=unknown 或空缺字段，不要用页面结果文字补齐。仅凭文字无法确认图形含义时，visualDependency 仍设为 false；只有输入中明确包含可用的非文字视觉语义时才设为 true。只输出 JSON。" }, { role: "user", content: JSON.stringify({ text, boxes }) }], settings, apiKey, signal);
 }
 export async function explainAnswer(question: ExtractedQuestion, probability: ProbabilityResult, settings: LLMSettings, apiKey: string, signal?: AbortSignal): Promise<string> {
   const response = await call(settings, apiKey, { model: settings.model, temperature: 0.2, messages: explanationMessages(question, probability) }, signal);
@@ -89,7 +120,7 @@ function textContent(value: unknown): string {
   if (!Array.isArray(value)) return "";
   return value.map((part) => typeof part === "string" ? part : (part && typeof part === "object" && "text" in part && typeof part.text === "string" ? part.text : "")).join("");
 }
-export function parseJsonObject(value: string | object): Partial<ExtractedQuestion> {
+export function parseJsonObject(value: string | object): StructuredQuestionResult {
   if (typeof value === "object" && value !== null) return value;
   const cleaned = value.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
   const start = cleaned.indexOf("{"), end = cleaned.lastIndexOf("}");
