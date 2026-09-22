@@ -109,6 +109,15 @@ try {
   });
   if (!localOnly?.ok || !localOnly.probability) throw new Error(`Local-only OCR fallback returned an invalid response: ${JSON.stringify(localOnly)}`);
   if (visionRequests !== 0) throw new Error(`Local-only OCR unexpectedly uploaded an image to the vision model (vision=${visionRequests})`);
+  const visionRequestsBeforeSuccess = visionRequests;
+  const visionSuccess = await page.evaluate(async () => {
+    const canvas = document.createElement("canvas"); canvas.width = 900; canvas.height = 340;
+    const context = canvas.getContext("2d"); context.fillStyle = "white"; context.fillRect(0, 0, canvas.width, canvas.height); context.fillStyle = "black"; context.font = "42px Arial";
+    ["Which number is even?", "A. 3", "B. 4"].forEach((line, index) => context.fillText(line, 40, 75 + index * 90));
+    return chrome.runtime.sendMessage({ type: "ANALYZE", requestId: crypto.randomUUID(), question: { source: "dom", questionType: "unknown", stem: "", options: [], sourceRect: { x: 0, y: 0, width: canvas.width, height: canvas.height }, recognitionConfidence: 0.2, warnings: ["INCOMPLETE_OPTIONS"] }, screenshot: canvas.toDataURL("image/png"), devicePixelRatio: 1, visionConsent: "allow", captureAuthorized: true });
+  });
+  if (!visionSuccess?.ok || !visionSuccess.probability) throw new Error(`Vision recognition smoke returned an invalid response: ${JSON.stringify(visionSuccess)}`);
+  if (visionRequests !== visionRequestsBeforeSuccess + 1) throw new Error(`Successful vision recognition did not upload exactly one image (vision=${visionRequests})`);
   forceStructuredMissingIgnored = true;
   const requestsBeforeMissingLedger = jevRequests;
   const missingLedger = await page.evaluate(async () => {
@@ -121,6 +130,7 @@ try {
   if (jevRequests !== requestsBeforeMissingLedger) throw new Error("Missing OCR exclusion ledger reached JEV");
   forceStructuredMissingIgnored = false;
   forceVisionUnsupported = true;
+  const visionRequestsBeforeFallback = visionRequests;
   const visionFallback = await page.evaluate(async () => {
     const canvas = document.createElement("canvas"); canvas.width = 900; canvas.height = 340;
     const context = canvas.getContext("2d"); context.fillStyle = "white"; context.fillRect(0, 0, canvas.width, canvas.height); context.fillStyle = "black"; context.font = "42px Arial";
@@ -128,7 +138,7 @@ try {
     return chrome.runtime.sendMessage({ type: "ANALYZE", requestId: crypto.randomUUID(), question: { source: "dom", questionType: "unknown", stem: "", options: [], sourceRect: { x: 0, y: 0, width: canvas.width, height: canvas.height }, recognitionConfidence: 0.2, warnings: ["INCOMPLETE_OPTIONS"] }, screenshot: canvas.toDataURL("image/png"), devicePixelRatio: 1, visionConsent: "allow", captureAuthorized: true });
   });
   if (!visionFallback?.ok || !visionFallback.probability) throw new Error(`Vision 400 fallback smoke returned an invalid response: ${JSON.stringify(visionFallback)}`);
-  if (visionRequests !== 1) throw new Error(`Vision capability fallback was not exercised exactly once (vision=${visionRequests})`);
+  if (visionRequests !== visionRequestsBeforeFallback + 1) throw new Error(`Vision capability fallback was not exercised exactly once (vision=${visionRequests})`);
   const explanation = await page.evaluate(() => new Promise((resolve, reject) => {
     const port = chrome.runtime.connect({ name: "jev-swot-explanation" }); let text = "";
     const timeout = setTimeout(() => { port.disconnect(); reject(new Error("streaming explanation timed out")); }, 10_000);
