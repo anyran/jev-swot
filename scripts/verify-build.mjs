@@ -3,7 +3,11 @@ import { readdir, readFile } from "node:fs/promises";
 
 const manifest = JSON.parse(await readFile(new URL("../dist/manifest.json", import.meta.url), "utf8"));
 if (manifest.manifest_version !== 3) throw new Error("dist manifest is not MV3");
-if (manifest.name !== "Jev 做题家" || !String(manifest.description).includes("Jev SWOT")) throw new Error("dist manifest product naming is out of date");
+if (manifest.default_locale !== "zh_CN" || manifest.name !== "__MSG_extName__" || manifest.description !== "__MSG_extDescription__") throw new Error("dist manifest localization is out of date");
+for (const [locale, expectedName, expectedDescription] of [["zh_CN", "Jev 做题家", "Jev SWOT"], ["en", "Jev SWOT", "Jev SWOT"]]) {
+  const messages = JSON.parse(await readFile(new URL(`../dist/_locales/${locale}/messages.json`, import.meta.url), "utf8"));
+  if (messages.extName?.message !== expectedName || !String(messages.extDescription?.message).includes(expectedDescription)) throw new Error(`dist ${locale} product naming is out of date`);
+}
 const contentPath = new URL(`../dist/${manifest.content_scripts[0].js[0]}`, import.meta.url);
 const content = await readFile(contentPath, "utf8");
 if (/^\s*(?:import|export)(?:\s|[({"])/m.test(content)) throw new Error("Chrome content script contains ESM import/export and cannot execute as a classic manifest script");
