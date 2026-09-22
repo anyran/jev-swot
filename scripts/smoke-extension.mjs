@@ -4,7 +4,16 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createServer } from "node:http";
 
-const candidates = [process.env.CHROME_PATH, "/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser"].filter(Boolean);
+const platformCandidates = process.platform === "darwin"
+  ? ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/Applications/Chromium.app/Contents/MacOS/Chromium"]
+  : process.platform === "win32"
+    ? [
+        process.env.ProgramFiles ? join(process.env.ProgramFiles, "Google/Chrome/Application/chrome.exe") : undefined,
+        process.env["ProgramFiles(x86)"] ? join(process.env["ProgramFiles(x86)"], "Google/Chrome/Application/chrome.exe") : undefined,
+        process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, "Google/Chrome/Application/chrome.exe") : undefined
+      ]
+    : ["/usr/bin/google-chrome", "/usr/bin/google-chrome-stable", "/usr/bin/chromium", "/usr/bin/chromium-browser"];
+const candidates = [process.env.CHROME_PATH, ...platformCandidates].filter(Boolean);
 let executablePath;
 for (const candidate of candidates) { try { await access(candidate); executablePath = candidate; break; } catch { /* try next */ } }
 if (!executablePath) throw new Error("Chrome/Chromium not found; set CHROME_PATH to run the extension smoke test.");
