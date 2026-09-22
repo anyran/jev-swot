@@ -87,4 +87,11 @@ describe("DOM extraction", () => {
     element.insertAdjacentHTML("afterbegin", '<canvas width="200" height="100"></canvas>');
     expect(extractFromElement(element).warnings).toContain("VISION_MODEL_REQUIRED");
   });
+  it("treats a selected visual root as a visual dependency", () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 320;
+    canvas.height = 180;
+    document.body.append(canvas);
+    expect(extractFromElement(canvas).warnings).toContain("VISION_MODEL_REQUIRED");
+  });
 });

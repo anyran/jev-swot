@@ -76,11 +76,11 @@ export function extractFromElement(element: Element): ExtractedQuestion {
   const hasCheckboxRole = !!element.querySelector("[role=checkbox]");
   const hasRadioRole = !!element.querySelector("[role=radio]");
   const questionType = hasCheckbox || hasCheckboxRole ? "multiple" : hasRadio || hasRadioRole ? "single" : MULTIPLE_CUE.test(allText) ? "multiple" : SINGLE_CUE.test(allText) ? "single" : "unknown";
-  const visualElements = [...element.querySelectorAll("img,canvas,svg")].filter(visible);
+  const visualElements = (element.matches("img,canvas,svg") ? [element, ...element.querySelectorAll("img,canvas,svg")] : [...element.querySelectorAll("img,canvas,svg")]).filter(visible);
   const imageContext = visualElements.map((image) => image.getAttribute("alt") || image.getAttribute("aria-label") || image.getAttribute("title") || "").map(cleanText).filter(Boolean).join("\n");
   const hasUnlabelledVisual = visualElements.some((image) => !cleanText(image.getAttribute("alt") || image.getAttribute("aria-label") || image.getAttribute("title") || ""));
   const hasRelevantVisual = visualElements.length > 0 && (VISUAL_CUE.test(`${allText}\n${imageContext}`) || hasUnlabelledVisual);
-  const hasFormulaMarkup = !!element.querySelector("math,msup,msub,sup,sub,[class*='katex' i],[class*='mathjax' i]");
+  const hasFormulaMarkup = element.matches("math,msup,msub,sup,sub,[class*='katex' i],[class*='mathjax' i]") || !!element.querySelector("math,msup,msub,sup,sub,[class*='katex' i],[class*='mathjax' i]");
   const warnings: RecognitionWarning[] = stem && options.length >= 2 ? [] : ["INCOMPLETE_OPTIONS"];
   if (FORMULA_CUE.test(allText) || hasFormulaMarkup) warnings.push("POSSIBLE_FORMULA");
   if (hasRelevantVisual) warnings.push("POSSIBLE_DIAGRAM", "VISION_MODEL_REQUIRED");

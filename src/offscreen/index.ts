@@ -4,6 +4,7 @@ import type { WorkerRequest } from "../shared/types";
 const engine = new PaddleOcr();
 const ocrControllers = new Map<string, AbortController>();
 let ocrQueue = Promise.resolve();
+const MAX_CROP_PIXELS = 5_000_000;
 chrome.runtime.onMessage.addListener((request: WorkerRequest, _sender, sendResponse) => {
   if (request.type === "CANCEL_OCR") {
     ocrControllers.get(request.requestId)?.abort();
@@ -34,7 +35,7 @@ async function cropImage(dataUrl: string, rect: { x: number; y: number; width: n
   const right = Math.max(left + 1, Math.min(bitmap.width, Math.round((rect.x + rect.width) * dpr)));
   const bottom = Math.max(top + 1, Math.min(bitmap.height, Math.round((rect.y + rect.height) * dpr)));
   const x = left, y = top, width = right - left, height = bottom - top;
-  const scale = Math.min(1, 2400 / Math.max(width, height));
+  const scale = Math.min(1, 2400 / Math.max(width, height), Math.sqrt(MAX_CROP_PIXELS / Math.max(1, width * height)));
   const canvas = new OffscreenCanvas(Math.max(1, Math.round(width * scale)), Math.max(1, Math.round(height * scale)));
   canvas.getContext("2d")!.drawImage(bitmap, x, y, width, height, 0, 0, canvas.width, canvas.height);
   bitmap.close();
