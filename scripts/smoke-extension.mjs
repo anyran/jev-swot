@@ -100,6 +100,8 @@ try {
     return chrome.runtime.sendMessage({ type: "OCR", imageDataUrl: canvas.toDataURL("image/png"), rect: { x: 0, y: 0, width: canvas.width, height: canvas.height }, devicePixelRatio: 1, useWebGpu: true });
   });
   if (!ocr?.ok || typeof ocr.text !== "string" || ocr.text.trim().length < 3) throw new Error(`Packaged OCR smoke test failed: ${JSON.stringify(ocr)}`);
+  const ocrText = ocr.text.toLowerCase();
+  if (!ocrText.includes("even") || !ocrText.includes("3") || !ocrText.includes("4")) throw new Error(`Packaged OCR did not recover the expected test question text: ${JSON.stringify({ text: ocr.text, confidence: ocr.confidence, backend: ocr.backend })}`);
   console.log("Smoke: OCR ready; testing page interaction");
   server = createServer((_request, response) => { response.setHeader("content-type", "text/html; charset=utf-8"); response.end(`<!doctype html><html><body><main><section id="question"><h2>2 + 2 等于多少？</h2><label id="choice-a"><input type="radio" name="answer">A. 3</label><label><input type="radio" name="answer">B. 4</label></section><section id="other"><h2>1 + 1 等于多少？</h2><label><input type="radio" name="other-answer">A. 1</label><label><input type="radio" name="other-answer">B. 2</label></section></main></body></html>`); });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));

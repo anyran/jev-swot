@@ -46,6 +46,16 @@ describe("storage normalization", () => {
     await expect(getSecrets()).resolves.toMatchObject({ typeSafeApiKey: "saved-jev", llmApiKey: "saved-llm" });
   });
 
+  it("prefers current-session credentials over the persisted profile values", async () => {
+    vi.stubGlobal("chrome", {
+      storage: {
+        local: { get: vi.fn(async (key: string) => key === "settings" ? { settings: {} } : { savedSecrets: { typeSafeApiKey: "old-jev", llmApiKey: "old-llm" } }), set: vi.fn(), remove: vi.fn() },
+        session: { get: vi.fn(async () => ({ secrets: { typeSafeApiKey: "new-jev" } })), set: vi.fn(), clear: vi.fn() }
+      }
+    });
+    await expect(getSecrets()).resolves.toEqual({ typeSafeApiKey: "new-jev", llmApiKey: "old-llm" });
+  });
+
   it("writes API keys to local storage so they survive a browser restart", async () => {
     const localSet = vi.fn();
     vi.stubGlobal("chrome", {
