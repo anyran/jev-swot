@@ -18,6 +18,7 @@ OpenAI 兼容模型生成答案解析。
 
 ```bash
 npm install
+npm run models:fetch
 npm test
 npm run build
 ```
