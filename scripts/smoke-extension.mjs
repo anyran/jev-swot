@@ -30,6 +30,11 @@ try {
     if (event.request.url.startsWith("https://api.openai.com/")) {
       llmRequests++;
       if (event.request.postData?.includes("image_url")) visionRequests++;
+      if (event.request.postData?.includes('"stream":true')) {
+        const stream = 'data: {"choices":[{"delta":{"content":"答案是 B"}}]}\n\ndata: [DONE]\n\n';
+        void workerSession.send("Fetch.fulfillRequest", { requestId: event.requestId, responseCode: 200, responseHeaders: [{ name: "content-type", value: "text/event-stream" }], body: Buffer.from(stream).toString("base64") });
+        return;
+      }
       const structured = { questionType: "single", stem: "Which number is even?", context: "", visualDependency: false, visualDependencyReason: "", options: [{ label: "A", text: "3" }, { label: "B", text: "4" }] };
       void workerSession.send("Fetch.fulfillRequest", { requestId: event.requestId, responseCode: 200, responseHeaders: [{ name: "content-type", value: "application/json" }], body: Buffer.from(JSON.stringify({ choices: [{ message: { content: JSON.stringify(structured) } }] })).toString("base64") });
     }
@@ -71,7 +76,18 @@ try {
   if (!fallback?.ok || !fallback.probability) throw new Error(`OCR fallback smoke returned an invalid response: ${JSON.stringify(fallback)}`);
   if (llmRequests === 0 || jevRequests < 2) throw new Error(`OCR fallback smoke request chain was not observed (llm=${llmRequests}, vision=${visionRequests}, jev=${jevRequests})`);
   if (visionRequests !== 0) throw new Error("Canvas OCR smoke unexpectedly uploaded an image to the vision model");
-  console.log(`Chrome loaded Jev 做题家（Jev SWOT） ${extensionId}; DOM→JEV and Canvas→local OCR→text model→JEV flows are healthy (${Math.round(ocr.confidence * 100)}%, ${ocr.backend}).`);
+  const explanation = await page.evaluate(() => new Promise((resolve, reject) => {
+    const port = chrome.runtime.connect({ name: "jev-swot-explanation" }); let text = "";
+    const timeout = setTimeout(() => { port.disconnect(); reject(new Error("streaming explanation timed out")); }, 10_000);
+    port.onMessage.addListener((message) => {
+      if (message.type === "chunk") text += message.chunk ?? "";
+      if (message.type === "error") { clearTimeout(timeout); port.disconnect(); reject(new Error(message.message ?? "streaming explanation failed")); }
+      if (message.type === "done") { clearTimeout(timeout); port.disconnect(); resolve(text); }
+    });
+    port.postMessage({ question: { source: "user-edited", questionType: "single", stem: "Which number is even?", options: [{ id: "option_1", label: "A", text: "3" }, { id: "option_2", label: "B", text: "4" }], sourceRect: { x: 0, y: 0, width: 1, height: 1 }, recognitionConfidence: 1, warnings: [] }, probability: { mode: "single-distribution", options: [{ id: "option_1", label: "A", probability: 0.08 }, { id: "option_2", label: "B", probability: 0.92 }], confidence: 0.92, model: "jev-smoke" } });
+  }));
+  if (explanation !== "答案是 B") throw new Error(`Streaming explanation smoke returned ${JSON.stringify(explanation)}`);
+  console.log(`Chrome loaded Jev 做题家（Jev SWOT） ${extensionId}; DOM→JEV, Canvas→local OCR→text model→JEV, and streaming explanation flows are healthy (${Math.round(ocr.confidence * 100)}%, ${ocr.backend}).`);
 } finally {
   await browser?.close();
   if (server) { server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); }
