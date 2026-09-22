@@ -95,7 +95,8 @@ export class ResultOverlay {
     const boxes = p.boxes.map((box) => `<button type="button" class="ocr-box" title="${escapeHtml(box.text)} · ${(box.confidence * 100).toFixed(0)}%" style="left:${box.x / p.width * 100}%;top:${box.y / p.height * 100}%;width:${box.width / p.width * 100}%;height:${box.height / p.height * 100}%"></button>`).join("");
     const rawText = p.boxes.map((box) => box.text).join("\n");
     const excluded = p.excludedText ? `<details class="excluded"><summary>模型排除的非题目文字</summary><pre class="ocr-text">${escapeHtml(p.excludedText)}</pre></details>` : "";
-    return `<details class="preview" open><summary>识别原图、OCR 文本与文本框</summary><div class="preview-image"><img src="${escapeHtml(p.imageDataUrl)}" alt="本次识别的题目截图">${boxes}</div><pre class="ocr-text">${escapeHtml(rawText || "（未检测到文字）")}</pre>${excluded}<small>点击或悬停文本框可查看逐项 OCR 置信度；截图仅保留在本次覆盖层内。</small></details>`;
+    const overallConfidence = this.question ? `整体识别置信度 ${(this.question.recognitionConfidence * 100).toFixed(0)}% · ` : "";
+    return `<details class="preview" open><summary>识别原图、OCR 文本与文本框</summary><div class="preview-image"><img src="${escapeHtml(p.imageDataUrl)}" alt="本次识别的题目截图">${boxes}</div><pre class="ocr-text">${escapeHtml(rawText || "（未检测到文字）")}</pre>${excluded}<small>${overallConfidence}点击或悬停文本框可查看逐项 OCR 置信度；截图仅保留在本次覆盖层内。</small></details>`;
   }
   private render(content: string) {
     if (!this.host.isConnected) document.documentElement.append(this.host);
