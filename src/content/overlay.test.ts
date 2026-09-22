@@ -1,6 +1,18 @@
-import { describe, expect, it } from "vitest";
-import { summarizeAnswer } from "./overlay";
-import type { ProbabilityResult } from "../shared/types";
+import { describe, expect, it, vi } from "vitest";
+import { ResultOverlay, summarizeAnswer } from "./overlay";
+import type { ExtractedQuestion, ProbabilityResult } from "../shared/types";
+
+const question: ExtractedQuestion = {
+  source: "dom",
+  questionType: "single",
+  stem: "Which number is even?",
+  options: [{ id: "option_1", label: "A", text: "3" }, { id: "option_2", label: "B", text: "4" }],
+  sourceRect: { x: 0, y: 0, width: 1, height: 1 },
+  recognitionConfidence: 1,
+  warnings: []
+};
+function shadow(overlay: ResultOverlay): ShadowRoot { return (overlay as unknown as { root: ShadowRoot }).root; }
+function close(overlay: ResultOverlay) { shadow(overlay).querySelector<HTMLElement>('[data-action="close"]')?.click(); }
 
 describe("compact answer summary", () => {
   it("shows the highest-probability single answer", () => {
@@ -63,5 +75,21 @@ describe("compact answer summary", () => {
       model: "jev-test"
     };
     expect(summarizeAnswer(probability)).toMatchObject({ label: "A", uncertain: true, detail: "选择倾向" });
+  });
+
+  it("offers ordinary-model direct answering from expanded probability details", () => {
+    const overlay = new ResultOverlay(vi.fn(), vi.fn(), vi.fn(), vi.fn());
+    overlay.show({ ok: true, question, probability: { mode: "single-distribution", options: [{ id: "option_1", label: "A", probability: 0.1 }, { id: "option_2", label: "B", probability: 0.9 }], confidence: 0.9, model: "jev-test" } });
+    shadow(overlay).querySelector<HTMLElement>('[data-action="toggle-details"]')?.click();
+    expect(shadow(overlay).querySelector('[data-action="direct-answer"]')).not.toBeNull();
+    close(overlay);
+  });
+
+  it("keeps an unknown question type unknown until the user chooses one", () => {
+    const overlay = new ResultOverlay(vi.fn(), vi.fn(), vi.fn(), vi.fn());
+    overlay.show({ ok: false, code: "STRUCTURE_REVIEW_REQUIRED", message: "请校正", recoverable: true, question: { ...question, questionType: "unknown" } });
+    const select = shadow(overlay).querySelector<HTMLSelectElement>("#type");
+    expect(select?.value).toBe("unknown");
+    close(overlay);
   });
 });
