@@ -8,6 +8,11 @@ describe("question parsing", () => {
     expect(q.options.map((x) => x.label)).toEqual(["A", "B", "C"]);
     expect(validateQuestion(q)).toContain("请确认题目是单选还是多选");
   });
+  it("accepts OCR letter labels separated by whitespace", () => {
+    const q = parseQuestionText("哪个数字是偶数？\nA 3\nB 4");
+    expect(q.stem).toBe("哪个数字是偶数？");
+    expect(q.options.map((x) => x.text)).toEqual(["3", "4"]);
+  });
   it("flags diagrams", () => expect(parseQuestionText("如图所示\nA. 1\nB. 2").warnings).toContain("POSSIBLE_DIAGRAM"));
   it("flags geometry and chemistry visual cues", () => {
     expect(parseQuestionText("几何图中阴影面积是多少？\nA. 1\nB. 2").warnings).toContain("POSSIBLE_DIAGRAM");
