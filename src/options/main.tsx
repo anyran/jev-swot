@@ -33,8 +33,8 @@ function App() {
     let url: URL;
     try { url = new URL(settings.llm.baseUrl); }
     catch { setSaved("Base URL 不是有效的网址。"); return false; }
-    if (url.username || url.password || (url.protocol !== "https:" && !(url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)))) {
-      setSaved("模型地址必须使用 HTTPS；仅本机调试地址允许 HTTP，且不能在 URL 中包含账号密码。"); return false;
+    if (url.username || url.password || url.search || url.hash || (url.protocol !== "https:" && !(url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)))) {
+      setSaved("模型地址必须使用 HTTPS；仅本机调试地址允许 HTTP，且不能在 URL 中包含账号密码、查询参数或片段。"); return false;
     }
     const granted = await chrome.permissions.request({ origins: [`${url.origin}/*`] });
     if (!granted) setSaved("未获得模型接口域名权限，设置未保存。");
