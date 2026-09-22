@@ -4,6 +4,15 @@ import { readdir, readFile } from "node:fs/promises";
 const manifest = JSON.parse(await readFile(new URL("../dist/manifest.json", import.meta.url), "utf8"));
 if (manifest.manifest_version !== 3) throw new Error("dist manifest is not MV3");
 if (manifest.default_locale !== "zh_CN" || manifest.name !== "__MSG_extName__" || manifest.description !== "__MSG_extDescription__") throw new Error("dist manifest localization is out of date");
+const requiredPermissions = ["activeTab", "scripting", "storage", "commands", "offscreen"];
+if (!requiredPermissions.every((permission) => manifest.permissions?.includes(permission))) throw new Error("dist manifest is missing a required extension permission");
+if (!manifest.host_permissions?.includes("https://api.typesafe.ai/*")) throw new Error("dist manifest is missing the fixed TypeSafe host permission");
+if (!manifest.optional_host_permissions?.includes("https://*/*") || !manifest.optional_host_permissions?.includes("http://*/*")) throw new Error("dist manifest is missing optional OpenAI-compatible host permissions");
+if (manifest.background?.service_worker !== "assets/background.js" || manifest.background?.type !== "module") throw new Error("dist manifest background service worker is out of date");
+if (manifest.options_page !== "options.html" || !manifest.content_scripts?.[0]?.js?.length) throw new Error("dist manifest is missing options or content-script entries");
+const shortcut = manifest.commands?.["select-question"];
+if (shortcut?.suggested_key?.default !== "Ctrl+Shift+Y" || shortcut?.suggested_key?.mac !== "Command+Shift+Y") throw new Error("dist manifest shortcut defaults are out of date");
+if (!String(manifest.content_security_policy?.extension_pages ?? "").includes("wasm-unsafe-eval")) throw new Error("dist manifest CSP does not allow the bundled ONNX WASM runtime");
 for (const [locale, expectedName, expectedDescription] of [["zh_CN", "Jev 做题家", "Jev SWOT"], ["en", "Jev SWOT", "Jev SWOT"]]) {
   const messages = JSON.parse(await readFile(new URL(`../dist/_locales/${locale}/messages.json`, import.meta.url), "utf8"));
   if (messages.extName?.message !== expectedName || !String(messages.extDescription?.message).includes(expectedDescription)) throw new Error(`dist ${locale} product naming is out of date`);

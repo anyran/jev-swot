@@ -3,6 +3,16 @@ import type { DirectAnswerResult, ExtractedQuestion, LLMSettings, OcrTextBox, Pr
 export class LlmError extends Error {
   constructor(message: string, public status?: number, public unsupportedVision = false, public retryable = false) { super(message); }
 }
+export function validateLlmBaseUrl(baseUrl: string): string | undefined {
+  let url: URL;
+  try { url = new URL(baseUrl.trim()); }
+  catch { return "模型地址不是有效的网址。"; }
+  const localHttpHosts = new Set(["localhost", "127.0.0.1", "[::1]"]);
+  if (url.username || url.password || url.search || url.hash) return "模型地址不能包含账号密码、查询参数或片段。";
+  if (url.protocol === "https:") return undefined;
+  if (url.protocol === "http:" && localHttpHosts.has(url.hostname.toLowerCase())) return undefined;
+  return "模型地址必须使用 HTTPS；仅 localhost、127.0.0.1 或 [::1] 允许 HTTP。";
+}
 function endpoint(baseUrl: string): string {
   const normalized = baseUrl.trim().replace(/\/+$/, "");
   return /\/chat\/completions$/i.test(normalized) ? normalized : `${normalized}/chat/completions`;
@@ -56,6 +66,8 @@ function directAnswerSchema() {
 }
 async function call(settings: LLMSettings, apiKey: string, body: object, signal?: AbortSignal): Promise<Response> {
   if (signal?.aborted) throw new LlmError("模型请求已取消。", undefined, false, false);
+  const invalidBaseUrl = validateLlmBaseUrl(settings.baseUrl);
+  if (invalidBaseUrl) throw new LlmError(invalidBaseUrl, undefined, false, false);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(new DOMException("模型请求超时", "TimeoutError")), 45_000);
   const abort = () => controller.abort(signal?.reason);
@@ -87,7 +99,7 @@ async function structuredJson(messages: Message[], settings: LLMSettings, apiKey
       return { data: parseJsonObject<Record<string, unknown>>(Array.isArray(content) ? textContent(content) : (content ?? "{}")), structuredOutputDetected: (responseFormat as { type?: string } | undefined)?.type === "json_schema" ? "supported" : "unsupported" };
     }
     const responseText = await response.text().catch(() => "");
-    const unsupportedVision = visionRequest && [400, 415, 422].includes(response.status) && (/image|vision|multimodal|image_url|content.*(?:type|image)|unsupported.*(?:input|content)|(?:does|do)\s+not\s+support|invalid.*(?:image|content|modality)|only.*text|text.?only|modalit/i.test(responseText) || response.status === 415 || !responseText.trim());
+    const unsupportedVision = visionRequest && [400, 415, 422].includes(response.status) && (response.status === 415 || /image|vision|multimodal|image_url|content.*(?:type|image)|unsupported.*(?:input|content)|(?:does|do)\s+not\s+support|invalid.*(?:image|content|modality)|only.*text|text.?only|modalit/i.test(responseText));
     if (unsupportedVision) throw new LlmError("当前模型不支持图像输入。", response.status, true, false);
     const formatRejected = [400, 422].includes(response.status) && (/response_format|json_schema|structured|schema|unsupported.*format|not.*support.*format/i.test(responseText) || !responseText.trim());
     lastError = new LlmError(`模型请求失败 (${response.status})${responseText ? `: ${safeProviderDetail(responseText, apiKey)}` : ""}`, response.status, false, response.status === 429 || response.status >= 500);

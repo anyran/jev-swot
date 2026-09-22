@@ -1,10 +1,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { LlmError, answerWithLlm, parseJsonObject, recognizeWithVision, streamExplanation, structureOcrText } from "./llm";
+import { LlmError, answerWithLlm, parseJsonObject, recognizeWithVision, streamExplanation, structureOcrText, validateLlmBaseUrl } from "./llm";
 import type { LLMSettings } from "../shared/types";
 
 const settings: LLMSettings = { baseUrl: "https://example.test/v1", model: "model", vision: "auto", structuredOutput: "auto" };
 afterEach(() => vi.restoreAllMocks());
 describe("OpenAI-compatible structured output", () => {
+  it("allows HTTPS providers and local HTTP development endpoints only", () => {
+    expect(validateLlmBaseUrl("https://example.test/v1")).toBeUndefined();
+    expect(validateLlmBaseUrl("http://localhost:8787/v1")).toBeUndefined();
+    expect(validateLlmBaseUrl("http://192.168.1.8:8787/v1")).toContain("HTTPS");
+    expect(validateLlmBaseUrl("https://user:pass@example.test/v1")).toContain("账号密码");
+  });
   it("parses fenced JSON", () => expect(parseJsonObject("```json\n{\"stem\":\"q\"}\n```")).toMatchObject({ stem: "q" }));
   it("asks the structure model to separate question text from results", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ questionType: "single", stem: "q", context: "", ignoredText: "正确答案：B；解析：…", options: [{ label: "A", text: "x" }, { label: "B", text: "y" }] }) } }] }), { status: 200 })));
@@ -79,6 +85,10 @@ describe("OpenAI-compatible structured output", () => {
   it("classifies a provider's invalid image input response as unsupported vision", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("invalid image input for this model", { status: 400 })));
     await expect(recognizeWithVision("data:image/png;base64,AA==", settings, "secret")).rejects.toMatchObject({ unsupportedVision: true, retryable: false });
+  });
+  it("does not cache an empty 400 response as unsupported vision", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 400 })));
+    await expect(recognizeWithVision("data:image/png;base64,AA==", settings, "secret")).rejects.toMatchObject({ unsupportedVision: false });
   });
   it("keeps a transient vision 429 retryable instead of marking the model unsupported", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("busy", { status: 429 })));
