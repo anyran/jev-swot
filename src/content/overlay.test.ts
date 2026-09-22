@@ -80,6 +80,7 @@ describe("compact answer summary", () => {
   it("offers ordinary-model direct answering from expanded probability details", () => {
     const overlay = new ResultOverlay(vi.fn(), vi.fn(), vi.fn(), vi.fn());
     overlay.show({ ok: true, question, probability: { mode: "single-distribution", options: [{ id: "option_1", label: "A", probability: 0.1 }, { id: "option_2", label: "B", probability: 0.9 }], confidence: 0.9, model: "jev-test" } });
+    expect(shadow(overlay).querySelector(".answer-compact")?.textContent).toBe("答案B");
     shadow(overlay).querySelector<HTMLElement>('[data-action="toggle-details"]')?.click();
     expect(shadow(overlay).querySelector('[data-action="direct-answer"]')).not.toBeNull();
     close(overlay);

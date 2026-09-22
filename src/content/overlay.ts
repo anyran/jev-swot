@@ -56,10 +56,10 @@ export class ResultOverlay {
   explanation(text: string) { const node = this.root.querySelector("#explanation"); if (node) node.textContent = text; }
   explanationChunk(text: string) { const node = this.root.querySelector("#explanation"); if (node) node.textContent += text; }
   private compact() {
-    if (this.directResult) return `<div class="answer-compact"><span>AI答案</span><strong>${escapeHtml(this.directResult.answerLabels.join("、"))}</strong><small>${escapeHtml(this.directResult.model)}</small></div>`;
+    if (this.directResult) return `<div class="answer-compact"><span>答案</span><strong>${escapeHtml(this.directResult.answerLabels.join("、"))}</strong></div>`;
     const probability = this.probability; if (!probability) return "";
     const summary = summarizeAnswer(probability);
-    return `<div class="answer-compact"><span>${summary.uncertain ? "倾向" : "答案"}</span><strong>${escapeHtml(summary.label)}</strong>${summary.detail ? `<small>${escapeHtml(summary.detail)}</small>` : ""}</div>`;
+    return `<div class="answer-compact"><span>${summary.uncertain ? "倾向" : "答案"}</span><strong>${escapeHtml(summary.label)}</strong></div>`;
   }
   private details() {
     if (this.directResult) return this.directDetails();
