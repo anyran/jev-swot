@@ -5,7 +5,7 @@ const FORMULA_RE = /[∑√∫≈≠≤≥±×÷∞∂∇∈∉∝→←↔^]|[�
 const DIAGRAM_RE = /(?:如图|下图|图中|曲线|折线|柱状|散点|阴影|面积|图表|统计图|几何|化学(?:结构|式)|结构式|分子|坐标(?:系|轴)?|示意图|diagram|graph|figure|chart|plot|axis|geometry|chemical\s+structure|molecule)/i;
 const MULTIPLE_RE = /(?:多选|可多选|选择所有|所有正确|select all|multiple choice)/i;
 const SINGLE_RE = /(?:单选|只能选择一项|判断题|single choice|true or false)/i;
-const RESULT_ANNOTATION_RE = /(?:正确答案|参考答案|答案解析|解析|得分|得分情况|你的答案|作答结果|提交结果|判定结果|correct\s+answer|reference\s+answer|answer\s+explanation|explanation|score|your\s+answer|submission\s+result|page\s+result)\s*(?:[:：]|是|为|is|was|=)/i;
+const RESULT_ANNOTATION_RE = /(?:(?:正确答案|参考答案|答案解析|解析|得分|得分情况|你的答案|作答结果|提交结果|判定结果|correct\s+answer|reference\s+answer|answer\s+explanation|explanation|score|your\s+answer|submission\s+result|page\s+result)\s*(?:[:：]|是|为|is|was|=)|(?:我的答案|答案|my\s+answer|answer|result)\s*[:：=])/i;
 
 export function stableOptionId(index: number): string { return `option_${index + 1}`; }
 export function fallbackOptionLabel(index: number): string { return index < 26 ? String.fromCharCode(65 + index) : String(index + 1); }

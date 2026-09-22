@@ -24,7 +24,7 @@ try {
   browser = await puppeteer.launch({ executablePath, headless: true, userDataDir, enableExtensions: [extensionPath], args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-crash-reporter"] });
   const target = await browser.waitForTarget((item) => item.type() === "service_worker" && item.url().includes("assets/background.js"), { timeout: 15_000 });
   const extensionId = new URL(target.url()).host;
-  const workerSession = await target.createCDPSession(); let jevRequests = 0, llmRequests = 0, visionRequests = 0, directAnswerRequests = 0, forceVisionUnsupported = false, forceStructuredMissingIgnored = false, jevInputWasClean = false;
+  const workerSession = await target.createCDPSession(); let jevRequests = 0, llmRequests = 0, visionRequests = 0, directAnswerRequests = 0, forceVisionUnsupported = false, forceVisionMissingContext = false, forceStructuredMissingIgnored = false, jevInputWasClean = false, multipleJevTargetsExplicit = false;
   await workerSession.send("Fetch.enable", { patterns: [{ urlPattern: "https://api.typesafe.ai/*", requestStage: "Request" }, { urlPattern: "https://api.openai.com/*", requestStage: "Request" }] });
   workerSession.on("Fetch.requestPaused", (event) => {
     if (event.request.url.startsWith("https://api.typesafe.ai/")) {
@@ -32,18 +32,29 @@ try {
       const requestBody = event.request.postData ?? "";
       if (requestBody.includes("Correct answer:") || requestBody.includes("Explanation:")) jevInputWasClean = false;
       else if (requestBody.includes("Which number is even?")) jevInputWasClean = true;
+      let payload;
+      try { payload = JSON.parse(requestBody); } catch { payload = undefined; }
+      const questionEntries = Object.entries(payload?.questions ?? {});
+      const multiple = questionEntries.length > 0 && questionEntries.every(([, value]) => value?.type === "noul");
+      if (multiple) {
+        multipleJevTargetsExplicit = questionEntries.every(([id, value]) => value?.instructions?.optionId === id && !String(JSON.stringify(value?.instructions)).includes("Correct"));
+      }
+      const answers = multiple
+        ? Object.fromEntries(questionEntries.map(([id], index) => [id, { type: "noul", noul: index === 0 ? 0.8 : 0.35 }]))
+        : { answer: { type: "choice", choice: "option_2", confidence: 0.92, probabilities: { option_1: 0.08, option_2: 0.92 } } };
       void workerSession.send("Fetch.fulfillRequest", {
         requestId: event.requestId,
         responseCode: 200,
         responseHeaders: [{ name: "content-type", value: "application/json" }],
-        body: Buffer.from(JSON.stringify({ model: "jev-smoke", answers: { answer: { type: "choice", choice: "option_2", confidence: 0.92, probabilities: { option_1: 0.08, option_2: 0.92 } } } })).toString("base64")
+        body: Buffer.from(JSON.stringify({ model: "jev-smoke", answers })).toString("base64")
       });
       return;
     }
     if (event.request.url.startsWith("https://api.openai.com/")) {
       llmRequests++;
-      if (event.request.postData?.includes("image_url")) visionRequests++;
-      if (forceVisionUnsupported && event.request.postData?.includes("image_url")) {
+      const isVisionRequest = event.request.postData?.includes("image_url") === true;
+      if (isVisionRequest) visionRequests++;
+      if (forceVisionUnsupported && isVisionRequest) {
         void workerSession.send("Fetch.fulfillRequest", { requestId: event.requestId, responseCode: 400, responseHeaders: [{ name: "content-type", value: "text/plain" }], body: Buffer.from("image_url is not supported").toString("base64") });
         return;
       }
@@ -58,7 +69,7 @@ try {
         void workerSession.send("Fetch.fulfillRequest", { requestId: event.requestId, responseCode: 200, responseHeaders: [{ name: "content-type", value: "application/json" }], body: Buffer.from(JSON.stringify({ choices: [{ message: { content: JSON.stringify(direct) } }] })).toString("base64") });
         return;
       }
-      const structured = { questionType: "single", stem: "Which number is even?", context: "", visualDependency: false, visualDependencyReason: "", ...(forceStructuredMissingIgnored ? {} : { ignoredText: "Correct answer: B\nExplanation: even numbers are divisible by two" }), options: [{ label: "A", text: "3" }, { label: "B", text: "4 Correct answer: B" }] };
+      const structured = { questionType: "single", stem: "Which number is even?", context: "", visualDependency: forceVisionMissingContext && isVisionRequest, visualDependencyReason: "", ...(forceStructuredMissingIgnored ? {} : { ignoredText: "Correct answer: B\nExplanation: even numbers are divisible by two" }), options: [{ label: "A", text: "3" }, { label: "B", text: "4 Correct answer: B" }] };
       void workerSession.send("Fetch.fulfillRequest", { requestId: event.requestId, responseCode: 200, responseHeaders: [{ name: "content-type", value: "application/json" }], body: Buffer.from(JSON.stringify({ choices: [{ message: { content: JSON.stringify(structured) } }] })).toString("base64") });
     }
   });
@@ -174,6 +185,17 @@ try {
   if (missingLedger?.ok || missingLedger?.code !== "STRUCTURE_REVIEW_REQUIRED") throw new Error(`Missing OCR exclusion ledger bypassed structure review: ${JSON.stringify(missingLedger)}`);
   if (jevRequests !== requestsBeforeMissingLedger) throw new Error("Missing OCR exclusion ledger reached JEV");
   forceStructuredMissingIgnored = false;
+  forceVisionMissingContext = true;
+  const requestsBeforeMissingVisionContext = jevRequests;
+  const missingVisionContext = await page.evaluate(async () => {
+    const canvas = document.createElement("canvas"); canvas.width = 900; canvas.height = 340;
+    const context = canvas.getContext("2d"); context.fillStyle = "white"; context.fillRect(0, 0, canvas.width, canvas.height); context.fillStyle = "black"; context.font = "42px Arial";
+    ["Which number is even?", "A. 3", "B. 4"].forEach((line, index) => context.fillText(line, 40, 75 + index * 90));
+    return chrome.runtime.sendMessage({ type: "ANALYZE", requestId: crypto.randomUUID(), question: { source: "dom", questionType: "unknown", stem: "", options: [], sourceRect: { x: 0, y: 0, width: canvas.width, height: canvas.height }, recognitionConfidence: 0.2, warnings: ["INCOMPLETE_OPTIONS"] }, screenshot: canvas.toDataURL("image/png"), devicePixelRatio: 1, visionConsent: "allow", captureAuthorized: true });
+  });
+  if (missingVisionContext?.ok || missingVisionContext?.code !== "STRUCTURE_REVIEW_REQUIRED") throw new Error(`Vision result without usable image semantics bypassed structure review: ${JSON.stringify(missingVisionContext)}`);
+  if (jevRequests !== requestsBeforeMissingVisionContext) throw new Error("Vision result without usable image semantics reached JEV");
+  forceVisionMissingContext = false;
   forceVisionUnsupported = true;
   const visionRequestsBeforeFallback = visionRequests;
   const visionFallback = await page.evaluate(async () => {
@@ -196,6 +218,9 @@ try {
     port.postMessage({ question: { source: "user-edited", questionType: "single", stem: "Which number is even?", options: [{ id: "option_1", label: "A", text: "3" }, { id: "option_2", label: "B", text: "4" }], sourceRect: { x: 0, y: 0, width: 1, height: 1 }, recognitionConfidence: 1, warnings: [] }, probability: { mode: "single-distribution", options: [{ id: "option_1", label: "A", probability: 0.08 }, { id: "option_2", label: "B", probability: 0.92 }], confidence: 0.92, model: "jev-smoke" } });
   }));
   if (explanation !== "答案是 B") throw new Error(`Streaming explanation smoke returned ${JSON.stringify(explanation)}`);
+  const multiple = await page.evaluate(() => chrome.runtime.sendMessage({ type: "ANALYZE", requestId: crypto.randomUUID(), question: { source: "user-edited", questionType: "multiple", stem: "请选择所有偶数。", options: [{ id: "option_1", label: "A", text: "2" }, { id: "option_2", label: "B", text: "3" }], sourceRect: { x: 0, y: 0, width: 1, height: 1 }, recognitionConfidence: 1, warnings: [] }, captureAuthorized: false }));
+  if (!multiple?.ok || multiple.probability?.mode !== "independent-selection" || multiple.probability.options.length !== 2) throw new Error(`Multiple-choice Noul smoke returned an invalid response: ${JSON.stringify(multiple)}`);
+  if (!multipleJevTargetsExplicit) throw new Error("Multiple-choice Noul request did not identify each target option without embedding option text");
   await page.evaluate(() => chrome.runtime.sendMessage({ type: "CLEAR_SESSION" }));
   const remainingSession = await page.evaluate(() => chrome.storage.session.get(null));
   if (Object.keys(remainingSession).length !== 0) throw new Error(`Session secrets were not cleared: ${Object.keys(remainingSession).join(", ")}`);

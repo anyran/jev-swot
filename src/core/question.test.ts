@@ -77,4 +77,9 @@ describe("question parsing", () => {
     expect(stripExcludedText("B. 4 Correct answer: B", "Correct answer: B")).toBe("B. 4");
     expect(stripExcludedText("Explanation: even numbers are divisible by two", "Explanation: even numbers are divisible by two")).toBe("");
   });
+  it("removes bare answer/result annotations without deleting the question text", () => {
+    expect(stripExcludedText("哪个数字是偶数？\nA. 3\nB. 4\n答案：B")).toBe("哪个数字是偶数？\nA. 3\nB. 4");
+    expect(stripExcludedText("Which number is even?\nA. 3\nB. 4\nAnswer: B")).toBe("Which number is even?\nA. 3\nB. 4");
+    expect(stripExcludedText("答案是什么？\nA. 3\nB. 4")).toBe("答案是什么？\nA. 3\nB. 4");
+  });
 });

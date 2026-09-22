@@ -6,6 +6,11 @@ import type { ExtractedQuestion, RecognitionPreview, WorkerRequest, WorkerRespon
 
 const activeRequests = new Map<string, AbortController>();
 
+// Keep session secrets confined to trusted extension contexts.  Content
+// scripts do not need API keys; making the access level explicit protects
+// against accidental exposure if a future content-script path reads storage.
+void chrome.storage.session.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" }).catch(() => undefined);
+
 chrome.commands.onCommand.addListener(async (command, tab) => {
   if (command === "select-question" && tab?.id) await startSelection(tab);
 });
@@ -147,7 +152,7 @@ async function handle(request: Exclude<WorkerRequest, { type: "OCR" | "CROP_IMAG
       const recognized = await recognizeFallback(question, screenshot, request.devicePixelRatio ?? 1, settings, secrets, request.requestId, controller.signal, request.visionConsent !== "deny", (stage, message) => sendProgress(sender, request.requestId, stage, message));
       question = recognized.question; preview = recognized.preview;
     }
-    if (question.source === "local-ocr" && question.warnings.includes("STRUCTURE_REVIEW_REQUIRED")) {
+    if (question.warnings.includes("STRUCTURE_REVIEW_REQUIRED")) {
       return { ok: false, code: "STRUCTURE_REVIEW_REQUIRED", message: "普通模型未完成题目结构化。请在覆盖层中确认题干和选项，排除答案、解析或页面结果文字后再重试。", recoverable: true, question, preview };
     }
     const errors = validateQuestion(question);
@@ -278,11 +283,15 @@ function normalizeParsed(parsed: Partial<ExtractedQuestion> & { ignoredText?: st
   if (visualDependencyReason && !contextParts[0].includes(visualDependencyReason)) contextParts.push(`视觉信息：${visualDependencyReason}`);
   const normalizedStem = typeof parsed.stem === "string" ? stripExcludedText(parsed.stem, parsed.ignoredText) : base.stem;
   const modelReplacedIncompleteStructure = modelSuppliedOptions && candidateOptions.length >= 2 && !!normalizedStem;
-  const warnings = [...base.warnings.filter((warning) => !(modelReplacedIncompleteStructure && warning === "INCOMPLETE_OPTIONS")), ...(Array.isArray(parsed.warnings) ? parsed.warnings.filter(isRecognitionWarning) : [])];
+  const warnings = [...base.warnings.filter((warning) =>
+    !(modelReplacedIncompleteStructure && warning === "INCOMPLETE_OPTIONS") &&
+    !(source === "vision" && warning === "VISION_MODEL_REQUIRED")
+  ), ...(Array.isArray(parsed.warnings) ? parsed.warnings.filter(isRecognitionWarning) : [])];
   if (modelSuppliedOptions && candidateOptions.length < 2) warnings.push("INCOMPLETE_OPTIONS");
   if (typeof parsed.stem === "string" && !parsed.stem.trim()) warnings.push("INCOMPLETE_OPTIONS");
   if (visualDependency) warnings.push("POSSIBLE_DIAGRAM");
   if (source === "local-ocr" && visualDependency) warnings.push("VISION_MODEL_REQUIRED");
+  if (source === "vision" && visualDependency && !contextParts.some((part) => part.trim())) warnings.push("STRUCTURE_REVIEW_REQUIRED");
   const questionType = parsed.questionType === "single" || parsed.questionType === "multiple" || parsed.questionType === "unknown" ? parsed.questionType : base.questionType;
   return {
     ...base,

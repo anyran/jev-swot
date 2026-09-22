@@ -18,7 +18,10 @@ describe("JEV request mapping", () => {
     expect(result.mode).toBe("independent-selection"); expect(result.options.map(x => x.probability)).toEqual([.8, .6]);
     const request = JSON.parse((vi.mocked(fetch).mock.calls[0][1] as RequestInit).body as string);
     expect(request.state.options.option_1).toContain("3");
-    expect(request.questions.option_1.instructions).not.toContain("3");
+    expect(request.questions.option_1.instructions.optionId).toBe("option_1");
+    expect(JSON.stringify(request.questions.option_1.instructions)).not.toContain("3");
+    expect(request.questions.option_2.instructions.optionId).toBe("option_2");
+    expect(JSON.stringify(request.questions.option_2.instructions)).not.toContain("4");
   });
   it("retries one transient service failure", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response("busy", { status: 503 })).mockResolvedValueOnce(new Response(JSON.stringify({ model: "jev-test", answers: { answer: { type: "choice", confidence: .8, probabilities: { option_1: .2, option_2: .8 } } } }), { status: 200 })));
