@@ -19,15 +19,44 @@ function isOptionNode(node: Element): boolean {
   const cells = node.querySelectorAll("td,th");
   return cells.length >= 2 && !node.querySelector("th:first-child");
 }
-function visibleText(element: Element): string {
+function intersects(element: Element, clip?: { x: number; y: number; width: number; height: number }): boolean {
+  if (!clip) return true;
+  const rect = element.getBoundingClientRect();
+  const right = Number.isFinite(rect.right) ? rect.right : rect.x + rect.width;
+  const bottom = Number.isFinite(rect.bottom) ? rect.bottom : rect.y + rect.height;
+  return right > clip.x && rect.x < clip.x + clip.width && bottom > clip.y && rect.y < clip.y + clip.height;
+}
+
+function textIntersects(node: Node, clip?: { x: number; y: number; width: number; height: number }): boolean {
+  if (!clip) return true;
+  const parent = node.parentElement;
+  if (!parent) return false;
+  try {
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    const rect = range.getBoundingClientRect();
+    if (rect.width || rect.height) {
+      const right = Number.isFinite(rect.right) ? rect.right : rect.x + rect.width;
+      const bottom = Number.isFinite(rect.bottom) ? rect.bottom : rect.y + rect.height;
+      return right > clip.x && rect.x < clip.x + clip.width && bottom > clip.y && rect.y < clip.y + clip.height;
+    }
+  } catch {
+    // Some browser-generated text nodes do not expose a measurable Range.
+  }
+  return intersects(parent, clip);
+}
+
+function visibleText(element: Element, clip?: { x: number; y: number; width: number; height: number }): string {
   const pieces: string[] = [], walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
   let node: Node | null;
   while ((node = walker.nextNode())) {
     const parent = node.parentElement;
-    if (!parent || parent.closest(EXCLUDED) || !visible(parent)) continue;
+    if (!parent || parent.closest(EXCLUDED) || !visible(parent) || !textIntersects(node, clip)) continue;
     const value = node.textContent?.trim(); if (value) pieces.push(value);
   }
-  return cleanText(pieces.join("\n") || element.getAttribute("aria-label") || element.getAttribute("title") || "");
+  if (pieces.length) return cleanText(pieces.join("\n"));
+  if (clip && !intersects(element, clip)) return "";
+  return cleanText(element.getAttribute("aria-label") || element.getAttribute("title") || "");
 }
 
 export function findQuestionContainer(start: Element): Element {
@@ -53,18 +82,18 @@ export function findQuestionContainer(start: Element): Element {
   return best;
 }
 
-export function extractFromElement(element: Element): ExtractedQuestion {
-  const controls = [...element.querySelectorAll<HTMLInputElement>("input[type=radio],input[type=checkbox]")].filter(visible);
+export function extractFromElement(element: Element, clip?: { x: number; y: number; width: number; height: number }): ExtractedQuestion {
+  const controls = [...element.querySelectorAll<HTMLInputElement>("input[type=radio],input[type=checkbox]")].filter((input) => visible(input) && intersects(input, clip));
   const optionElements = controls.length
     ? controls.map((input) => input.closest("label") ?? (input.id ? element.querySelector(`label[for='${CSS.escape(input.id)}']`) : null) ?? input.parentElement).filter(Boolean) as Element[]
-    : [...element.querySelectorAll("li,label,[role=radio],[role=checkbox],[role=option],tr")].filter(isOptionNode);
+    : [...element.querySelectorAll("li,label,[role=radio],[role=checkbox],[role=option],tr")].filter((node) => isOptionNode(node) && intersects(node, clip));
   const dedup = [...new Set(optionElements)];
   const options: QuestionOption[] = dedup.map((node, index) => {
-    const raw = cleanText(visibleText(node) || node.getAttribute("aria-label") || node.getAttribute("title") || node.querySelector("input, [role=radio], [role=checkbox], [role=option]")?.getAttribute("aria-label") || "");
+    const raw = cleanText(visibleText(node, clip) || node.getAttribute("aria-label") || node.getAttribute("title") || node.querySelector("input, [role=radio], [role=checkbox], [role=option]")?.getAttribute("aria-label") || "");
     const match = /^\s*([A-Ha-h]|[1-9]\d{0,2}|[①②③④⑤⑥⑦⑧⑨])(?:[.、)）:]|\s+)\s*(.*)$/.exec(raw);
     return { id: `option_${index + 1}`, label: match?.[1]?.toUpperCase() ?? fallbackOptionLabel(index), text: match?.[2] || raw };
   }).filter((x) => x.text);
-  const allText = visibleText(element);
+  const allText = visibleText(element, clip);
   let stem = allText;
   for (const option of options) {
     const position = stem.indexOf(option.text);
@@ -76,7 +105,7 @@ export function extractFromElement(element: Element): ExtractedQuestion {
   const hasCheckboxRole = !!element.querySelector("[role=checkbox]");
   const hasRadioRole = !!element.querySelector("[role=radio]");
   const questionType = hasCheckbox || hasCheckboxRole ? "multiple" : hasRadio || hasRadioRole ? "single" : MULTIPLE_CUE.test(allText) ? "multiple" : SINGLE_CUE.test(allText) ? "single" : "unknown";
-  const visualElements = (element.matches("img,canvas,svg") ? [element, ...element.querySelectorAll("img,canvas,svg")] : [...element.querySelectorAll("img,canvas,svg")]).filter(visible);
+  const visualElements = (element.matches("img,canvas,svg") ? [element, ...element.querySelectorAll("img,canvas,svg")] : [...element.querySelectorAll("img,canvas,svg")]).filter((image) => visible(image) && intersects(image, clip));
   const imageContext = visualElements.map((image) => image.getAttribute("alt") || image.getAttribute("aria-label") || image.getAttribute("title") || "").map(cleanText).filter(Boolean).join("\n");
   const hasUnlabelledVisual = visualElements.some((image) => !cleanText(image.getAttribute("alt") || image.getAttribute("aria-label") || image.getAttribute("title") || ""));
   const hasRelevantVisual = visualElements.length > 0 && (VISUAL_CUE.test(`${allText}\n${imageContext}`) || hasUnlabelledVisual);
@@ -86,7 +115,7 @@ export function extractFromElement(element: Element): ExtractedQuestion {
   if (hasRelevantVisual) warnings.push("POSSIBLE_DIAGRAM", "VISION_MODEL_REQUIRED");
   return {
     source: "dom", questionType,
-    stem, options, context: imageContext || undefined, sourceRect: rectOf(element), recognitionConfidence: stem && options.length >= 2 ? 0.95 : 0.45,
+    stem, options, context: imageContext || undefined, sourceRect: clip ?? rectOf(element), recognitionConfidence: stem && options.length >= 2 ? 0.95 : 0.45,
     warnings
   };
 }

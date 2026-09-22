@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fallbackOptionLabel, hasQuestionStructure, hasQuestionTextConflict, parseQuestionText, validateQuestion } from "./question";
+import { fallbackOptionLabel, hasQuestionStructure, hasQuestionTextConflict, parseQuestionText, stripExcludedText, validateQuestion } from "./question";
 
 describe("question parsing", () => {
   it("parses labelled options", () => {
@@ -57,5 +57,11 @@ describe("question parsing", () => {
     expect(fallbackOptionLabel(0)).toBe("A");
     expect(fallbackOptionLabel(25)).toBe("Z");
     expect(fallbackOptionLabel(26)).toBe("27");
+  });
+  it("removes standalone result lines from model text", () => {
+    expect(stripExcludedText("题干\nA. 3\nB. 4\n正确答案：B\n解析：偶数可被二整除", "正确答案：B\n解析：偶数可被二整除")).toBe("题干\nA. 3\nB. 4");
+  });
+  it("keeps an option prefix when a result marker shares its OCR line", () => {
+    expect(stripExcludedText("B. 4 正确答案：B", "正确答案：B")).toBe("B. 4");
   });
 });

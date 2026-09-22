@@ -1,6 +1,6 @@
 import { askJev } from "../core/typesafe";
 import { LlmError, explainAnswer, recognizeWithVision, streamExplanation, structureOcrText } from "../core/llm";
-import { fallbackOptionLabel, hasQuestionStructure, hasQuestionTextConflict, parseQuestionText, stableOptionId, validateQuestion } from "../core/question";
+import { fallbackOptionLabel, hasQuestionStructure, hasQuestionTextConflict, parseQuestionText, stableOptionId, stripExcludedText, validateQuestion } from "../core/question";
 import { getSecrets, getSettings, setSecrets } from "../shared/storage";
 import type { ExtractedQuestion, RecognitionPreview, WorkerRequest, WorkerResponse } from "../shared/types";
 
@@ -247,17 +247,12 @@ function hasStructuredQuestionFields(parsed: import("../core/llm").StructuredQue
     && Array.isArray(parsed.options)
     && typeof parsed.context === "string"
     && typeof parsed.visualDependency === "boolean"
-    && typeof parsed.visualDependencyReason === "string";
+    && typeof parsed.visualDependencyReason === "string"
+    // The fallback json_object/plain-JSON path does not enforce the schema.
+    // Require the exclusion ledger explicitly so a successful HTTP response
+    // cannot be mistaken for proof that answer/result text was separated.
+    && typeof parsed.ignoredText === "string";
 }
-const RESULT_ANNOTATION_RE = /^(?:正确答案|参考答案|答案解析|解析|得分|得分情况|你的答案|作答结果|提交结果|判定结果)\s*[:：]/i;
-function stripExcludedText(value: string, ignoredText?: string): string {
-  const ignored = (ignoredText ?? "").split(/[\r\n；;]+/).map((fragment) => comparableModelText(fragment)).filter((fragment) => fragment.length >= 4);
-  return value.split(/\r?\n/).map((line) => line.trim()).filter((line) => {
-    const comparable = comparableModelText(line);
-    return !!comparable && !RESULT_ANNOTATION_RE.test(line) && !ignored.some((fragment) => comparable.includes(fragment));
-  }).join("\n").trim();
-}
-function comparableModelText(value: string): string { return value.toLocaleLowerCase().replace(/\s+/g, "").replace(/[，。！？、:：;；]+$/u, ""); }
 function isRecognitionWarning(value: unknown): value is ExtractedQuestion["warnings"][number] {
   return value === "LOW_OCR_CONFIDENCE" || value === "POSSIBLE_FORMULA" || value === "POSSIBLE_DIAGRAM" || value === "INCOMPLETE_OPTIONS" || value === "VISION_MODEL_REQUIRED" || value === "VISION_SERVICE_UNAVAILABLE" || value === "DOM_OCR_CONFLICT" || value === "STRUCTURE_REVIEW_REQUIRED";
 }

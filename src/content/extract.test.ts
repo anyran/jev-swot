@@ -30,6 +30,20 @@ describe("DOM extraction", () => {
     expect(question.stem).toContain("2 + 2");
     expect(question.options.map((option) => option.text)).toEqual(["3", "4"]);
   });
+  it("limits a dragged selection to the intersecting question text and controls", () => {
+    document.body.innerHTML = `<main><section class="question" data-y="20"><h2 data-y="20">第一题</h2><label data-y="60"><input data-y="60" type="radio">A. 甲</label><label data-y="90"><input data-y="90" type="radio">B. 乙</label></section><section class="question" data-y="300"><h2 data-y="300">第二题</h2><label data-y="340"><input data-y="340" type="radio">A. 丙</label><label data-y="370"><input data-y="370" type="radio">B. 丁</label></section></main>`;
+    Object.defineProperty(Element.prototype, "getBoundingClientRect", { configurable: true, value() {
+      const y = Number((this as HTMLElement).dataset.y ?? 0);
+      const height = this.classList?.contains("question") ? 120 : 24;
+      return { x: 20, y, width: 500, height, right: 520, bottom: y + height };
+    } });
+    const second = document.querySelectorAll(".question")[1];
+    const question = extractFromElement(second, { x: 0, y: 280, width: 600, height: 180 });
+    expect(question.stem).toContain("第二题");
+    expect(question.stem).not.toContain("第一题");
+    expect(question.options.map((option) => option.text)).toEqual(["丙", "丁"]);
+    expect(question.sourceRect).toMatchObject({ x: 0, y: 280, width: 600, height: 180 });
+  });
   it("excludes CSS-hidden text from the question", () => {
     const question = document.querySelectorAll(".question")[0];
     question.insertAdjacentHTML("afterbegin", '<span style="display:none">ignore-secret-answer</span>');

@@ -81,9 +81,9 @@ function move(event: PointerEvent) { if (!selectionBox) return; const x = Math.m
 function up(event: PointerEvent) {
   const rect = { x: Math.min(start.x, event.clientX), y: Math.min(start.y, event.clientY), width: Math.abs(event.clientX-start.x), height: Math.abs(event.clientY-start.y) };
   cleanup(); if (rect.width < 10 || rect.height < 10) return;
-  const q = extractFromElement(elementFromRect(rect)); q.sourceRect = rect; analyze(q, undefined, selectionCaptureAuthorized); selectionCaptureAuthorized = false;
+  const q = extractFromElement(elementFromRect(rect), rect); analyze(q, undefined, selectionCaptureAuthorized); selectionCaptureAuthorized = false;
 }
-function cancelOnEscape(event: KeyboardEvent) { if (event.key === "Escape") cleanup(); }
+function cancelOnEscape(event: KeyboardEvent) { if (event.key === "Escape") { selectionCaptureAuthorized = false; cleanup(); } }
 function cleanup() { selecting = false; selectionBox?.remove(); selectionBox = null; document.documentElement.style.cursor = ""; document.removeEventListener("pointerdown", down, true); document.removeEventListener("pointermove", move, true); document.removeEventListener("pointerup", up, true); document.removeEventListener("keydown", cancelOnEscape, true); }
 async function analyze(question: ExtractedQuestion, visionConsent?: "allow" | "deny", captureAuthorized = lastCaptureAuthorized) {
   lastCaptureAuthorized = captureAuthorized;

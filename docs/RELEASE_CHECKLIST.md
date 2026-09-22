@@ -12,6 +12,7 @@
 - [x] Chrome 无 manifest、CSP 或 service worker 错误
 - [x] 发布 ZIP 包含模型、WASM、许可证、第三方声明和隐私说明
 - [x] `npm run assets:store` 可重复生成 1280×800 商店截图
+- [ ] GitHub Actions `Validate extension` 在目标提交上通过，并保留发布 ZIP 构建产物
 
 ## 必须人工验证
 
