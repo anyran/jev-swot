@@ -69,13 +69,14 @@ export type WorkerRequest =
   | { type: "CROP_IMAGE"; imageDataUrl: string; rect: DOMRectLike; devicePixelRatio: number }
   | { type: "RELEASE_OCR" }
   | { type: "TEST_CONNECTIONS"; imageDataUrl: string }
+  | { type: "GET_SETTINGS" }
   | { type: "CLEAR_SESSION" };
 
 export type AnalysisProgressStage = "capture" | "vision" | "ocr-loading" | "ocr-running" | "jev";
 export type RuntimeProgressMessage = { type: "ANALYZE_PROGRESS"; requestId: string; stage: AnalysisProgressStage; message: string };
 
 export type WorkerResponse =
-  | { ok: true; question?: ExtractedQuestion; probability?: ProbabilityResult; directAnswer?: DirectAnswerResult; explanation?: string; diagnostic?: string; preview?: RecognitionPreview }
+  | { ok: true; question?: ExtractedQuestion; probability?: ProbabilityResult; directAnswer?: DirectAnswerResult; explanation?: string; diagnostic?: string; preview?: RecognitionPreview; settings?: PersistentSettings }
   | { ok: false; code: string; message: string; recoverable: boolean; question?: ExtractedQuestion; preview?: RecognitionPreview };
 
 export const DEFAULT_SETTINGS: PersistentSettings = {

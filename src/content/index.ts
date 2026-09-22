@@ -12,24 +12,9 @@ const DEFAULT_CONTENT_SETTINGS: PersistentSettings = {
   disabledHosts: []
 };
 async function getSettings(): Promise<PersistentSettings> {
-  const stored = await chrome.storage.local.get("settings");
-  const raw = stored.settings && typeof stored.settings === "object" ? stored.settings as Record<string, unknown> : {};
-  const llm = raw.llm && typeof raw.llm === "object" ? raw.llm as Record<string, unknown> : {};
-  const capability = (value: unknown, fallback: "auto" | "supported" | "unsupported") => value === "auto" || value === "supported" || value === "unsupported" ? value : fallback;
-  const disabledHosts = Array.isArray(raw.disabledHosts) ? [...new Set(raw.disabledHosts.map((host) => typeof host === "string" ? host.trim().toLowerCase().replace(/^\.+|\.+$/g, "") : "").filter(Boolean))] : [];
-  const threshold = Number(raw.ocrThreshold);
-  return {
-    llm: {
-      baseUrl: typeof llm.baseUrl === "string" && llm.baseUrl.trim() ? llm.baseUrl.trim() : DEFAULT_CONTENT_SETTINGS.llm.baseUrl,
-      model: typeof llm.model === "string" && llm.model.trim() ? llm.model.trim() : DEFAULT_CONTENT_SETTINGS.llm.model,
-      vision: capability(llm.vision, "auto"),
-      structuredOutput: capability(llm.structuredOutput, "auto")
-    },
-    ocrThreshold: Number.isFinite(threshold) ? Math.min(0.95, Math.max(0.5, threshold)) : DEFAULT_CONTENT_SETTINGS.ocrThreshold,
-    useWebGpu: raw.useWebGpu === true,
-    confirmVisionUpload: raw.confirmVisionUpload !== false,
-    disabledHosts
-  };
+  const response = await chrome.runtime.sendMessage({ type: "GET_SETTINGS" }) as { ok?: boolean; settings?: PersistentSettings };
+  if (!response?.ok || !response.settings) throw new Error("无法读取扩展设置");
+  return response.settings;
 }
 
 let selecting = false;
@@ -43,27 +28,12 @@ let explanationPort: chrome.runtime.Port | undefined;
 let selectionCaptureAuthorized = false;
 let disabledForSite: boolean | undefined;
 let disabledStateReady = refreshDisabledState();
-chrome.storage.onChanged.addListener((changes, areaName) => {
-  if (areaName !== "local" || !changes.settings) return;
-  // Apply a newly-added disabled host synchronously.  The async storage
-  // refresh still handles removals and normalization, but a sensitive site
-  // must not have an interception window while that read is pending.
-  const next = changes.settings.newValue;
-  const rawHosts = next && typeof next === "object" && !Array.isArray(next)
-    ? (next as Record<string, unknown>).disabledHosts
-    : undefined;
-  if (Array.isArray(rawHosts)) {
-    const host = location.hostname.toLowerCase();
-    const disabledHosts = rawHosts
-      .map((entry) => typeof entry === "string" ? entry.trim().toLowerCase().replace(/^\.+|\.+$/g, "") : "")
-      .filter(Boolean);
-    if (disabledHosts.some((entry) => host === entry || host.endsWith(`.${entry}`))) stopForDisabledSite();
-  }
-  disabledStateReady = refreshDisabledState();
-});
-
-chrome.runtime.onMessage.addListener((message: { type?: string } | RuntimeProgressMessage, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message: { type?: string; settings?: PersistentSettings } | RuntimeProgressMessage, _sender, sendResponse) => {
   if (message.type === "PING") { sendResponse({ ok: true }); return false; }
+  if (message.type === "SETTINGS_CHANGED" && "settings" in message && message.settings) {
+    disabledStateReady = Promise.resolve(applyDisabledState(message.settings));
+    return false;
+  }
   if (message.type === "START_SELECTION") {
     void whenSiteEnabled(() => { selectionCaptureAuthorized = true; startSelection(); });
   }
@@ -148,16 +118,18 @@ function isEditable(target: EventTarget | null) { return target instanceof Eleme
 function isExtensionNode(target: EventTarget | null) { return target instanceof Element && !!target.closest("[data-jev-swot-root]"); }
 async function refreshDisabledState() {
   try {
-    const settings = await getSettings();
-    const host = location.hostname.toLowerCase();
-    disabledForSite = settings.disabledHosts.some((entry) => host === entry || host.endsWith(`.${entry}`));
-    if (disabledForSite) stopForDisabledSite();
+    applyDisabledState(await getSettings());
   } catch {
     // Fail closed if storage is unavailable.  A transient settings failure
     // must not enable page interception or screenshot analysis by accident.
     disabledForSite = true;
     stopForDisabledSite();
   }
+}
+function applyDisabledState(settings: PersistentSettings) {
+  const host = location.hostname.toLowerCase();
+  disabledForSite = settings.disabledHosts.some((entry) => host === entry || host.endsWith(`.${entry}`));
+  if (disabledForSite) stopForDisabledSite();
 }
 function stopForDisabledSite() {
   disabledForSite = true;

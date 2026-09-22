@@ -10,7 +10,18 @@ const activeRequests = new Map<string, AbortController>();
 // Keep session secrets confined to trusted extension contexts.  Content
 // scripts do not need API keys; making the access level explicit protects
 // against accidental exposure if a future content-script path reads storage.
-void chrome.storage.session.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" }).catch(() => undefined);
+void Promise.all([
+  chrome.storage.session.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" }),
+  chrome.storage.local.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" })
+]).catch(() => undefined);
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== "local" || !changes.settings) return;
+  void getSettings().then((settings) => chrome.tabs.query({}).then((tabs) => Promise.all(tabs
+    .filter((tab): tab is chrome.tabs.Tab & { id: number } => tab.id != null)
+    .map((tab) => chrome.tabs.sendMessage(tab.id, { type: "SETTINGS_CHANGED", settings }).catch(() => undefined)))))
+    .catch(() => undefined);
+});
 
 chrome.commands.onCommand.addListener(async (command, tab) => {
   if (command === "select-question" && tab?.id) await startSelection(tab);
@@ -68,6 +79,7 @@ async function handle(request: Exclude<WorkerRequest, { type: "OCR" | "CROP_IMAG
     if (await hasOffscreenDocument()) await chrome.offscreen.closeDocument();
     return { ok: true };
   }
+  if (request.type === "GET_SETTINGS") return { ok: true, settings: await getSettings() };
   const settings = await getSettings();
   const secrets = await getSecrets();
   if (request.type === "TEST_CONNECTIONS") {
