@@ -67,7 +67,7 @@ async function structuredQuestion(messages: Message[], settings: LLMSettings, ap
       return { ...parseJsonObject(Array.isArray(content) ? textContent(content) : (content ?? "{}")), structuredOutputDetected: (responseFormat as { type?: string } | undefined)?.type === "json_schema" ? "supported" : "unsupported" };
     }
     const responseText = await response.text().catch(() => "");
-    const unsupportedVision = visionRequest && [400, 415, 422].includes(response.status) && (/image|vision|multimodal|image_url|content.*(?:type|image)|unsupported.*(?:input|content)|(?:does|do)es?\s+not\s+support|invalid.*(?:image|content|modality)|only.*text|text.?only|modalit/i.test(responseText) || response.status === 415 || !responseText.trim());
+    const unsupportedVision = visionRequest && [400, 415, 422].includes(response.status) && (/image|vision|multimodal|image_url|content.*(?:type|image)|unsupported.*(?:input|content)|(?:does|do)\s+not\s+support|invalid.*(?:image|content|modality)|only.*text|text.?only|modalit/i.test(responseText) || response.status === 415 || !responseText.trim());
     if (unsupportedVision) throw new LlmError("当前模型不支持图像输入。", response.status, true, false);
     const formatRejected = [400, 422].includes(response.status) && (/response_format|json_schema|structured|schema|unsupported.*format|not.*support.*format/i.test(responseText) || !responseText.trim());
     lastError = new LlmError(`模型请求失败 (${response.status})${responseText ? `: ${responseText.slice(0, 160)}` : ""}`, response.status, false, response.status === 429 || response.status >= 500);
