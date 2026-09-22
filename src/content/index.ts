@@ -80,8 +80,10 @@ function down(event: PointerEvent) {
 function move(event: PointerEvent) { if (!selectionBox) return; const x = Math.min(start.x, event.clientX), y = Math.min(start.y, event.clientY); Object.assign(selectionBox.style, { left: `${x}px`, top: `${y}px`, width: `${Math.abs(event.clientX-start.x)}px`, height: `${Math.abs(event.clientY-start.y)}px` }); }
 function up(event: PointerEvent) {
   const rect = { x: Math.min(start.x, event.clientX), y: Math.min(start.y, event.clientY), width: Math.abs(event.clientX-start.x), height: Math.abs(event.clientY-start.y) };
+  const captureAuthorized = selectionCaptureAuthorized;
+  selectionCaptureAuthorized = false;
   cleanup(); if (rect.width < 10 || rect.height < 10) return;
-  const q = extractFromElement(elementFromRect(rect), rect); analyze(q, undefined, selectionCaptureAuthorized); selectionCaptureAuthorized = false;
+  const q = extractFromElement(elementFromRect(rect), rect); analyze(q, undefined, captureAuthorized);
 }
 function cancelOnEscape(event: KeyboardEvent) { if (event.key === "Escape") { selectionCaptureAuthorized = false; cleanup(); } }
 function cleanup() { selecting = false; selectionBox?.remove(); selectionBox = null; document.documentElement.style.cursor = ""; document.removeEventListener("pointerdown", down, true); document.removeEventListener("pointermove", move, true); document.removeEventListener("pointerup", up, true); document.removeEventListener("keydown", cancelOnEscape, true); }
