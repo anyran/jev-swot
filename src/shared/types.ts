@@ -5,7 +5,9 @@ export type RecognitionWarning =
   | "POSSIBLE_FORMULA"
   | "POSSIBLE_DIAGRAM"
   | "INCOMPLETE_OPTIONS"
-  | "VISION_MODEL_REQUIRED";
+  | "VISION_MODEL_REQUIRED"
+  | "VISION_SERVICE_UNAVAILABLE"
+  | "DOM_OCR_CONFLICT";
 
 export interface DOMRectLike { x: number; y: number; width: number; height: number }
 export interface OcrTextBox extends DOMRectLike { text: string; confidence: number }
@@ -43,7 +45,7 @@ export interface PersistentSettings {
   confirmVisionUpload: boolean;
   disabledHosts: string[];
 }
-export interface SessionSecrets { typeSafeApiKey?: string; llmApiKey?: string; visionDetected?: Capability; structuredOutputDetected?: Capability }
+export interface SessionSecrets { typeSafeApiKey?: string; llmApiKey?: string; visionDetected?: Capability; structuredOutputDetected?: Capability; capabilityKey?: string }
 
 export type WorkerRequest =
   | { type: "ANALYZE"; requestId: string; question: ExtractedQuestion; screenshot?: string; devicePixelRatio?: number; visionConsent?: "allow" | "deny"; captureAuthorized: boolean }
@@ -54,6 +56,9 @@ export type WorkerRequest =
   | { type: "RELEASE_OCR" }
   | { type: "TEST_CONNECTIONS"; imageDataUrl: string }
   | { type: "CLEAR_SESSION" };
+
+export type AnalysisProgressStage = "capture" | "vision" | "ocr-loading" | "ocr-running" | "jev";
+export type RuntimeProgressMessage = { type: "ANALYZE_PROGRESS"; requestId: string; stage: AnalysisProgressStage; message: string };
 
 export type WorkerResponse =
   | { ok: true; question?: ExtractedQuestion; probability?: ProbabilityResult; explanation?: string; diagnostic?: string; preview?: RecognitionPreview }

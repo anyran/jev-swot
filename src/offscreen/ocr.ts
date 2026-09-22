@@ -4,7 +4,7 @@ import type { DOMRectLike, RecognitionWarning } from "../shared/types";
 
 interface Point { x: number; y: number }
 interface Box { x: number; y: number; width: number; height: number; confidence: number; quad?: [Point, Point, Point, Point]; lowConfidenceRatio?: number }
-export interface OcrResult { text: string; confidence: number; warnings: RecognitionWarning[]; boxes: Array<Box & { text: string }>; backend: "wasm" | "webgpu" }
+export interface OcrResult { text: string; confidence: number; warnings: RecognitionWarning[]; boxes: Array<Box & { text: string }>; backend: "wasm" | "webgpu"; rotation?: 0 | 90 | -90 }
 
 export class PaddleOcr {
   private detector?: ort.InferenceSession;
@@ -49,11 +49,16 @@ export class PaddleOcr {
     let best = attempts.reduce((winner, attempt) => qualityScore(attempt) > qualityScore(winner) ? attempt : winner);
     if (best.confidence < 0.62 && crop.height > crop.width * 1.35) {
       const rotations = [rotateImage(crop, 90), rotateImage(crop, -90)];
-      for (const rotated of rotations) { const attempt = await this.recognizeVariant(rotated); if (qualityScore(attempt) > qualityScore(best)) best = attempt; }
+      for (const [index, rotated] of rotations.entries()) {
+        const attempt = await this.recognizeVariant(rotated, index === 0 ? 90 : -90);
+        if (qualityScore(attempt) > qualityScore(best)) best = attempt;
+      }
     }
+    const rotation = best.rotation;
+    if (rotation) best = { ...best, boxes: best.boxes.map((box) => unrotateBox(box, crop.width, crop.height, rotation)), rotation: 0 };
     return best;
   }
-  private async recognizeVariant(crop: ImageData): Promise<OcrResult> {
+  private async recognizeVariant(crop: ImageData, rotation: 0 | 90 | -90 = 0): Promise<OcrResult> {
     const detImage = resizeForDetection(crop);
     const detTensor = imageTensor(detImage.data, detImage.width, detImage.height, "det");
     const detResult = await this.detector!.run({ [this.detector!.inputNames[0]]: detTensor });
@@ -73,18 +78,18 @@ export class PaddleOcr {
     const averageConfidence = results.length ? results.reduce((sum, x) => sum + x.confidence, 0) / results.length : 0;
     const lowConfidenceRatio = results.length ? results.reduce((sum, x) => sum + (x.lowConfidenceRatio ?? 1), 0) / results.length : 1;
     const textArea = results.reduce((sum, x) => sum + x.width * x.height, 0) / Math.max(1, crop.width * crop.height);
-    const lines=text.split("\n"),firstOption=lines.findIndex(line=>/^\s*(?:[A-H]|[1-9]|[①-⑨])[.、)）:]/i.test(line)),optionCount=lines.filter(line=>/^\s*(?:[A-H]|[1-9]|[①-⑨])[.、)）:]/i.test(line)).length;
+    const lines=text.split("\n"),firstOption=lines.findIndex(line=>/^\s*(?:[A-H]|[1-9]\d{0,2}|[①-⑨])[.、)）:]/i.test(line)),optionCount=lines.filter(line=>/^\s*(?:[A-H]|[1-9]\d{0,2}|[①-⑨])[.、)）:]/i.test(line)).length;
     const structureScore=(firstOption>0?0.05:0)+Math.min(0.1,optionCount*0.05),areaScore=textArea>=0.01?0.05:Math.min(0.05,textArea*5);
     const confidence=Math.max(0,Math.min(1,averageConfidence*0.7+(1-lowConfidenceRatio)*0.1+structureScore+areaScore));
     const warnings = inferVisualWarnings(text, textArea);
     if (confidence < 0.72) warnings.push("LOW_OCR_CONFIDENCE");
     if (warnings.includes("POSSIBLE_DIAGRAM") || warnings.includes("POSSIBLE_FORMULA")) warnings.push("VISION_MODEL_REQUIRED");
-    return { text, confidence, warnings: [...new Set(warnings)], boxes: results, backend: this.backend };
+    return { text, confidence, warnings: [...new Set(warnings)], boxes: results, backend: this.backend, rotation };
   }
 }
 
 function qualityScore(result: OcrResult): number {
-  const completeness = /(?:^|\n)\s*(?:[A-H]|[1-9]|[①-⑨])[.、)）:]/m.test(result.text) ? 0.08 : 0;
+  const completeness = /(?:^|\n)\s*(?:[A-H]|[1-9]\d{0,2}|[①-⑨])[.、)）:]/m.test(result.text) ? 0.08 : 0;
   return result.confidence + Math.min(0.08, result.boxes.length * 0.005) + completeness;
 }
 function enhanceGrayscale(image: ImageData): ImageData {
@@ -198,6 +203,16 @@ export function projectQuadPoint([p0,p1,p2,p3]: [Point,Point,Point,Point],u:numb
   return {x:(a*u+b*v+c)/q,y:(d*u+e*v+f)/q};
 }
 function distance(a:Point,b:Point){return Math.hypot(a.x-b.x,a.y-b.y);}
+export function unrotateBox(box: Box & { text: string }, originalWidth: number, originalHeight: number, rotation: 90 | -90): Box & { text: string } {
+  const transform = (point: Point): Point => rotation === 90 ? { x: point.y, y: originalHeight - point.x } : { x: originalWidth - point.y, y: point.x };
+  const points = box.quad ? box.quad.map(transform) : [
+    transform({ x: box.x, y: box.y }), transform({ x: box.x + box.width, y: box.y }),
+    transform({ x: box.x + box.width, y: box.y + box.height }), transform({ x: box.x, y: box.y + box.height })
+  ];
+  const xs = points.map((point) => point.x), ys = points.map((point) => point.y), x = Math.max(0, Math.min(...xs)), y = Math.max(0, Math.min(...ys));
+  const right = Math.min(originalWidth, Math.max(...xs)), bottom = Math.min(originalHeight, Math.max(...ys));
+  return { ...box, x, y, width: Math.max(1, right - x), height: Math.max(1, bottom - y), quad: box.quad ? points as [Point, Point, Point, Point] : undefined };
+}
 function sampleBilinear(image:ImageData,x:number,y:number,target:Uint8ClampedArray,offset:number){const x0=Math.max(0,Math.min(image.width-1,Math.floor(x))),y0=Math.max(0,Math.min(image.height-1,Math.floor(y))),x1=Math.min(image.width-1,x0+1),y1=Math.min(image.height-1,y0+1),fx=Math.max(0,Math.min(1,x-x0)),fy=Math.max(0,Math.min(1,y-y0));for(let c=0;c<4;c++){const top=image.data[(y0*image.width+x0)*4+c]*(1-fx)+image.data[(y0*image.width+x1)*4+c]*fx,bottom=image.data[(y1*image.width+x0)*4+c]*(1-fx)+image.data[(y1*image.width+x1)*4+c]*fx;target[offset+c]=top*(1-fy)+bottom*fy;}}
 export function decodeCtc(tensor: ort.Tensor, dict: string[], batchIndex = 0): { text: string; confidence: number; lowConfidenceRatio: number } {
   const data=tensor.data as Float32Array,dims=tensor.dims,classes=Number(dims[dims.length-1]),steps=Number(dims[dims.length-2]);let previous=-1,text="",score=0,count=0,low=0;

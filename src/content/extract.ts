@@ -55,7 +55,7 @@ export function extractFromElement(element: Element): ExtractedQuestion {
   const dedup = [...new Set(optionElements)];
   const options: QuestionOption[] = dedup.map((node, index) => {
     const raw = cleanText(visibleText(node) || node.getAttribute("aria-label") || "");
-    const match = /^\s*([A-Ha-h]|[1-9]|[①②③④⑤⑥⑦⑧⑨])(?:[.、)）:]|\s+)\s*(.*)$/.exec(raw);
+    const match = /^\s*([A-Ha-h]|[1-9]\d{0,2}|[①②③④⑤⑥⑦⑧⑨])(?:[.、)）:]|\s+)\s*(.*)$/.exec(raw);
     return { id: `option_${index + 1}`, label: match?.[1]?.toUpperCase() ?? String.fromCharCode(65 + index), text: match?.[2] || raw };
   }).filter((x) => x.text);
   const allText = visibleText(element);
@@ -70,13 +70,14 @@ export function extractFromElement(element: Element): ExtractedQuestion {
   const hasCheckboxRole = !!element.querySelector("[role=checkbox]");
   const hasRadioRole = !!element.querySelector("[role=radio]");
   const questionType = hasCheckbox || hasCheckboxRole ? "multiple" : hasRadio || hasRadioRole ? "single" : MULTIPLE_CUE.test(allText) ? "multiple" : SINGLE_CUE.test(allText) ? "single" : "unknown";
+  const imageContext = [...element.querySelectorAll("img,canvas,svg")].filter(visible).map((image) => image.getAttribute("alt") || image.getAttribute("aria-label") || image.getAttribute("title") || "").map(cleanText).filter(Boolean).join("\n");
   const hasRelevantVisual = VISUAL_CUE.test(allText) && [...element.querySelectorAll("img,canvas,svg")].some(visible);
   const warnings: RecognitionWarning[] = stem && options.length >= 2 ? [] : ["INCOMPLETE_OPTIONS"];
   if (FORMULA_CUE.test(allText)) warnings.push("POSSIBLE_FORMULA");
   if (hasRelevantVisual) warnings.push("POSSIBLE_DIAGRAM", "VISION_MODEL_REQUIRED");
   return {
     source: "dom", questionType,
-    stem, options, sourceRect: rectOf(element), recognitionConfidence: stem && options.length >= 2 ? 0.95 : 0.45,
+    stem, options, context: imageContext || undefined, sourceRect: rectOf(element), recognitionConfidence: stem && options.length >= 2 ? 0.95 : 0.45,
     warnings
   };
 }

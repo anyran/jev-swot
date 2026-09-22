@@ -1,4 +1,4 @@
-import type { ExtractedQuestion, LLMSettings, ProbabilityResult } from "../shared/types";
+import type { ExtractedQuestion, LLMSettings, OcrTextBox, ProbabilityResult } from "../shared/types";
 
 export class LlmError extends Error {
   constructor(message: string, public status?: number, public unsupportedVision = false, public retryable = false) { super(message); }
@@ -23,7 +23,7 @@ async function call(settings: LLMSettings, apiKey: string, body: object, signal?
 }
 type Message = { role: string; content: unknown };
 export type StructuredQuestionResult = Partial<ExtractedQuestion> & { structuredOutputDetected?: "supported" | "unsupported" };
-async function structuredQuestion(messages: Message[], settings: LLMSettings, apiKey: string, signal?: AbortSignal): Promise<StructuredQuestionResult> {
+async function structuredQuestion(messages: Message[], settings: LLMSettings, apiKey: string, signal?: AbortSignal, visionRequest = false): Promise<StructuredQuestionResult> {
   const formats: Array<object | undefined> = settings.structuredOutput === "unsupported" ? [{ type: "json_object" }, undefined] : [{ type: "json_schema", json_schema: questionSchema() }, { type: "json_object" }, undefined];
   let lastError: LlmError | undefined;
   for (const responseFormat of formats) {
@@ -32,10 +32,11 @@ async function structuredQuestion(messages: Message[], settings: LLMSettings, ap
     const response = await call(settings, apiKey, body, signal);
     if (response.ok) {
       const data = await response.json();
-      return { ...parseJsonObject(data.choices?.[0]?.message?.content ?? "{}"), structuredOutputDetected: (responseFormat as { type?: string } | undefined)?.type === "json_schema" ? "supported" : "unsupported" };
+      const content = data.choices?.[0]?.message?.content;
+      return { ...parseJsonObject(Array.isArray(content) ? textContent(content) : (content ?? "{}")), structuredOutputDetected: (responseFormat as { type?: string } | undefined)?.type === "json_schema" ? "supported" : "unsupported" };
     }
     const responseText = await response.text().catch(() => "");
-    const unsupportedVision = response.status === 400 && /image|vision|multimodal|image_url/i.test(responseText);
+    const unsupportedVision = visionRequest && response.status === 400 && (/image|vision|multimodal|image_url|content.*(?:type|image)|unsupported.*(?:input|content)|only.*text/i.test(responseText) || !responseText.trim());
     if (unsupportedVision) throw new LlmError("当前模型不支持图像输入。", response.status, true, false);
     const formatRejected = response.status === 400 && /response_format|json_schema|structured|schema/i.test(responseText);
     lastError = new LlmError(`模型请求失败 (${response.status})${responseText ? `: ${responseText.slice(0, 160)}` : ""}`, response.status, false, response.status === 429 || response.status >= 500);
@@ -44,36 +45,42 @@ async function structuredQuestion(messages: Message[], settings: LLMSettings, ap
   throw lastError ?? new LlmError("模型未返回有效题目结构。");
 }
 export async function recognizeWithVision(imageDataUrl: string, settings: LLMSettings, apiKey: string, signal?: AbortSignal): Promise<StructuredQuestionResult> {
-  return structuredQuestion([{ role: "system", content: "从题目截图中忠实提取题干和选项。不要解题，不要补充看不见的内容。如果作答依赖图表、几何图、化学结构、公式排版或其他非文字视觉信息，visualDependency 必须为 true，visualDependencyReason 简述原因，并在 context 中客观、完整地描述解题所需的可见关系、标注和数值，供后续判断模型使用。只输出 JSON。" }, { role: "user", content: [{ type: "text", text: "提取这道题及作答所需的视觉信息。" }, { type: "image_url", image_url: { url: imageDataUrl } }] }], settings, apiKey, signal);
+  return structuredQuestion([{ role: "system", content: "从题目截图中忠实提取题干和选项。不要解题，不要补充看不见的内容。如果作答依赖图表、几何图、化学结构、公式排版或其他非文字视觉信息，visualDependency 必须为 true，visualDependencyReason 简述原因，并在 context 中客观、完整地描述解题所需的可见关系、标注和数值，供后续判断模型使用。只输出 JSON。" }, { role: "user", content: [{ type: "text", text: "提取这道题及作答所需的视觉信息。" }, { type: "image_url", image_url: { url: imageDataUrl } }] }], settings, apiKey, signal, true);
 }
-export async function structureOcrText(text: string, settings: LLMSettings, apiKey: string, signal?: AbortSignal): Promise<StructuredQuestionResult> {
-  return structuredQuestion([{ role: "system", content: "将 OCR 文本忠实整理为题目结构。不要解题或改写内容。visualDependency 设为 false，visualDependencyReason 设为空字符串。只输出 JSON。" }, { role: "user", content: text }], settings, apiKey, signal);
+export async function structureOcrText(text: string, settings: LLMSettings, apiKey: string, signal?: AbortSignal, boxes: OcrTextBox[] = []): Promise<StructuredQuestionResult> {
+  return structuredQuestion([{ role: "system", content: "将 OCR 文本及其坐标忠实整理为题目结构。按文本框的 y/x 坐标恢复阅读顺序，不要解题或改写内容。visualDependency 设为 false，visualDependencyReason 设为空字符串。只输出 JSON。" }, { role: "user", content: JSON.stringify({ text, boxes }) }], settings, apiKey, signal);
 }
 export async function explainAnswer(question: ExtractedQuestion, probability: ProbabilityResult, settings: LLMSettings, apiKey: string, signal?: AbortSignal): Promise<string> {
   const response = await call(settings, apiKey, { model: settings.model, temperature: 0.2, messages: explanationMessages(question, probability) }, signal);
   if (!response.ok) throw new LlmError(`答案解析失败 (${response.status})`, response.status, false, response.status === 429 || response.status >= 500);
   const data = await response.json();
-  return data.choices?.[0]?.message?.content ?? "模型未返回解析。";
+  return textContent(data.choices?.[0]?.message?.content) || "模型未返回解析。";
 }
 export async function streamExplanation(question: ExtractedQuestion, probability: ProbabilityResult, settings: LLMSettings, apiKey: string, onChunk: (chunk: string) => void, signal?: AbortSignal): Promise<string> {
   const response = await call(settings, apiKey, { model: settings.model, temperature: 0.2, stream: true, messages: explanationMessages(question, probability) }, signal);
   if (!response.ok) throw new LlmError(`答案解析失败 (${response.status})`, response.status, false, response.status === 429 || response.status >= 500);
   if (!response.body) return explainAnswer(question, probability, settings, apiKey, signal);
   const reader = response.body.getReader(), decoder = new TextDecoder(); let buffer = "", complete = "";
+  const consume = (raw: string) => {
+    const line = raw.trim(); if (!line.startsWith("data:")) return;
+    const data = line.slice(5).trim(); if (!data || data === "[DONE]") return;
+    try { const chunk = textContent(JSON.parse(data).choices?.[0]?.delta?.content); if (chunk) { complete += chunk; onChunk(chunk); } } catch { /* ignore non-JSON keepalive */ }
+  };
   while (true) {
     const { done, value } = await reader.read(); buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
-    const lines = buffer.split("\n"); buffer = lines.pop() ?? "";
-    for (const raw of lines) {
-      const line = raw.trim(); if (!line.startsWith("data:")) continue;
-      const data = line.slice(5).trim(); if (!data || data === "[DONE]") continue;
-      try { const chunk = JSON.parse(data).choices?.[0]?.delta?.content ?? ""; if (chunk) { complete += chunk; onChunk(chunk); } } catch { /* ignore non-JSON keepalive */ }
-    }
+    const lines = buffer.split("\n"); buffer = lines.pop() ?? ""; for (const raw of lines) consume(raw.replace(/\r$/, ""));
     if (done) break;
   }
+  if (buffer.trim()) consume(buffer);
   return complete;
 }
 function explanationMessages(question: ExtractedQuestion, probability: ProbabilityResult) {
   return [{ role: "system", content: "你是学习辅导老师。给出推荐答案、逐项简析、核心知识点和不确定性。不要声称拥有隐藏推理，也不要鼓励考试作弊。" }, { role: "user", content: JSON.stringify({ question, probability }) }];
+}
+function textContent(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (!Array.isArray(value)) return "";
+  return value.map((part) => typeof part === "string" ? part : (part && typeof part === "object" && "text" in part && typeof part.text === "string" ? part.text : "")).join("");
 }
 export function parseJsonObject(value: string | object): Partial<ExtractedQuestion> {
   if (typeof value === "object" && value !== null) return value;

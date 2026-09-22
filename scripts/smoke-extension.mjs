@@ -14,6 +14,18 @@ try {
   browser = await puppeteer.launch({ executablePath, headless: true, userDataDir, enableExtensions: [extensionPath], args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-crash-reporter"] });
   const target = await browser.waitForTarget((item) => item.type() === "service_worker" && item.url().includes("assets/background.js"), { timeout: 15_000 });
   const extensionId = new URL(target.url()).host;
+  const workerSession = await target.createCDPSession(); let jevRequests = 0;
+  await workerSession.send("Fetch.enable", { patterns: [{ urlPattern: "https://api.typesafe.ai/*", requestStage: "Request" }] });
+  workerSession.on("Fetch.requestPaused", (event) => {
+    if (!event.request.url.startsWith("https://api.typesafe.ai/")) return;
+    jevRequests++;
+    void workerSession.send("Fetch.fulfillRequest", {
+      requestId: event.requestId,
+      responseCode: 200,
+      responseHeaders: [{ name: "content-type", value: "application/json" }],
+      body: Buffer.from(JSON.stringify({ model: "jev-smoke", answers: { answer: { type: "choice", choice: "option_2", confidence: 0.92, probabilities: { option_1: 0.08, option_2: 0.92 } } } })).toString("base64")
+    });
+  });
   console.log("Smoke: service worker ready");
   const page = await browser.newPage();
   await page.goto(`chrome-extension://${extensionId}/options.html`, { waitUntil: "domcontentloaded" });
@@ -21,6 +33,7 @@ try {
   if (title !== "Jev 做题家设置 Jev SWOT") throw new Error(`Unexpected options title: ${title}`);
   const permissions = await page.evaluate(() => chrome.permissions.getAll());
   console.log(`Smoke: granted origins ${permissions.origins?.join(", ") ?? "none"}`);
+  await page.evaluate(() => chrome.storage.session.set({ secrets: { typeSafeApiKey: "smoke-only" } }));
   console.log("Smoke: options page ready; running packaged OCR");
   const ocr = await page.evaluate(async () => {
     if (!await chrome.offscreen.hasDocument()) await chrome.offscreen.createDocument({ url: "offscreen.html", reasons: [chrome.offscreen.Reason.BLOBS], justification: "Release smoke test for packaged local OCR" });
@@ -37,6 +50,7 @@ try {
   const questionPage = await browser.newPage(); await questionPage.goto(`http://127.0.0.1:${address.port}/`, { waitUntil: "networkidle0" });
   await questionPage.$eval("#choice-a", (element) => element.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, altKey: true })));
   await questionPage.waitForSelector('[data-jev-swot-root="true"]', { timeout: 5_000 });
+  await new Promise((resolve, reject) => { const deadline = Date.now() + 5_000; const poll = () => jevRequests ? resolve() : Date.now() > deadline ? reject(new Error("Mock JEV request was not observed")) : setTimeout(poll, 50); poll(); });
   const answerChanged = await questionPage.$eval('input[type="radio"]', (input) => input.checked);
   if (answerChanged) throw new Error("Extension modified the page answer during smoke test");
   console.log(`Chrome loaded Jev 做题家（Jev SWOT） ${extensionId}; service worker, content interaction, options page, and packaged OCR are healthy (${Math.round(ocr.confidence * 100)}%, ${ocr.backend}).`);

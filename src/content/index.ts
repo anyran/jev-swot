@@ -1,6 +1,21 @@
 import { elementFromRect, extractFromElement, findQuestionContainer } from "./extract";
 import { ResultOverlay } from "./overlay";
-import type { ExtractedQuestion, ProbabilityResult, WorkerResponse } from "../shared/types";
+import type { ExtractedQuestion, PersistentSettings, ProbabilityResult, RuntimeProgressMessage, WorkerResponse } from "../shared/types";
+
+// Keep the content script self-contained. Manifest V3 content scripts are classic
+// scripts, so Vite must not leave an ESM import to the shared storage chunk here.
+const DEFAULT_CONTENT_SETTINGS: PersistentSettings = {
+  llm: { baseUrl: "https://api.openai.com/v1", model: "gpt-4.1-mini", vision: "auto", structuredOutput: "auto" },
+  ocrThreshold: 0.72,
+  useWebGpu: false,
+  confirmVisionUpload: true,
+  disabledHosts: []
+};
+async function getSettings(): Promise<PersistentSettings> {
+  const stored = await chrome.storage.local.get("settings");
+  const settings = (stored.settings ?? {}) as Partial<PersistentSettings>;
+  return { ...DEFAULT_CONTENT_SETTINGS, ...settings, llm: { ...DEFAULT_CONTENT_SETTINGS.llm, ...(settings.llm ?? {}) } };
+}
 
 let selecting = false;
 let selectionBox: HTMLDivElement | null = null;
@@ -11,13 +26,23 @@ let activeRequestId: string | undefined;
 let explanationPort: chrome.runtime.Port | undefined;
 let selectionCaptureAuthorized = false;
 let lastCaptureAuthorized = false;
+let disabledForSite: boolean | undefined;
+let disabledStateReady = refreshDisabledState();
+chrome.storage.onChanged.addListener((changes, areaName) => { if (areaName === "local" && changes.settings) disabledStateReady = refreshDisabledState(); });
 
-chrome.runtime.onMessage.addListener((message) => { if (message.type === "START_SELECTION") { selectionCaptureAuthorized = true; startSelection(); } });
+chrome.runtime.onMessage.addListener((message: { type?: string } | RuntimeProgressMessage) => {
+  if (message.type === "START_SELECTION") {
+    void whenSiteEnabled(() => { selectionCaptureAuthorized = true; startSelection(); });
+  }
+  if (message.type === "ANALYZE_PROGRESS" && "requestId" in message && message.requestId === activeRequestId) overlay.progress(message.message);
+});
 document.addEventListener("dblclick", (event) => {
   if (!event.altKey || isEditable(event.target) || isExtensionNode(event.target)) return;
-  event.preventDefault(); event.stopPropagation();
-  const target = event.target instanceof Element ? event.target : document.body;
-  analyze(extractFromElement(findQuestionContainer(target)), undefined, false);
+  void whenSiteEnabled(() => {
+    event.preventDefault(); event.stopPropagation();
+    const target = event.target instanceof Element ? event.target : document.body;
+    analyze(extractFromElement(findQuestionContainer(target)), undefined, false);
+  });
 }, true);
 
 function startSelection() {
@@ -57,8 +82,18 @@ function explain(question: ExtractedQuestion, probability: ProbabilityResult) {
   port.postMessage({ question, probability });
 }
 function cancelActive() {
+  analysisSequence++;
   if (activeRequestId) { void chrome.runtime.sendMessage({ type: "CANCEL", requestId: activeRequestId }); activeRequestId = undefined; }
   explanationPort?.disconnect(); explanationPort = undefined;
 }
 function isEditable(target: EventTarget | null) { return target instanceof Element && (!!target.closest("input,textarea,select,[contenteditable]:not([contenteditable=false])") || document.designMode === "on"); }
 function isExtensionNode(target: EventTarget | null) { return target instanceof Element && !!target.closest("[data-jev-swot-root]"); }
+async function refreshDisabledState() {
+  const settings = await getSettings();
+  const host = location.hostname.toLowerCase();
+  disabledForSite = settings.disabledHosts.some((entry) => host === entry || host.endsWith(`.${entry}`));
+}
+async function whenSiteEnabled(action: () => void): Promise<void> {
+  await disabledStateReady;
+  if (!disabledForSite) action();
+}

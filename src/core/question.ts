@@ -1,6 +1,6 @@
 import type { ExtractedQuestion, QuestionOption, RecognitionWarning } from "../shared/types";
 
-const OPTION_RE = /^\s*(?:([A-Ha-h])|([1-9])|([①②③④⑤⑥⑦⑧⑨]))[.、)）:]\s*(.+)$/;
+const OPTION_RE = /^\s*(?:([A-Ha-h])|([1-9]\d{0,2})|([①②③④⑤⑥⑦⑧⑨]))[.、)）:]\s*(.+)$/;
 const FORMULA_RE = /[∑√∫≈≠≤≥^]|\b(?:sin|cos|tan|log)\b|\$[^$]+\$/i;
 const DIAGRAM_RE = /(?:如图|下图|曲线|阴影|图表|diagram|graph|figure)/i;
 const MULTIPLE_RE = /(?:多选|可多选|选择所有|所有正确|select all|multiple choice)/i;
@@ -42,7 +42,17 @@ export function validateQuestion(question: ExtractedQuestion): string[] {
   if (question.options.some((x) => !x.label.trim())) errors.push("选项标签不能为空");
   if (new Set(question.options.map((x) => x.label.trim().toLocaleUpperCase())).size !== question.options.length) errors.push("选项标签重复");
   if (question.options.some((x) => !x.text.trim())) errors.push("选项内容不能为空");
+  if (new Set(question.options.map((x) => x.text.trim().toLocaleLowerCase())).size !== question.options.length) errors.push("选项内容重复");
   return errors;
+}
+
+export function hasQuestionTextConflict(reference: ExtractedQuestion, candidate: ExtractedQuestion): boolean {
+  if (reference.source !== "dom" || reference.options.length < 2 || candidate.options.length < 2) return false;
+  const referenceStem = comparableText(reference.stem), candidateStem = comparableText(candidate.stem);
+  if (referenceStem.length < 4 || candidateStem.length < 4) return false;
+  const stemAgreement = textSimilarity(referenceStem, candidateStem);
+  const matchingOptions = reference.options.filter((referenceOption) => candidate.options.some((candidateOption) => textSimilarity(comparableText(referenceOption.text), comparableText(candidateOption.text)) >= 0.45)).length;
+  return stemAgreement < 0.8 && matchingOptions / Math.min(reference.options.length, candidate.options.length) < 0.5;
 }
 
 export function inferVisualWarnings(text: string, textAreaRatio: number): RecognitionWarning[] {
@@ -50,4 +60,14 @@ export function inferVisualWarnings(text: string, textAreaRatio: number): Recogn
   if (FORMULA_RE.test(text)) warnings.push("POSSIBLE_FORMULA");
   if (DIAGRAM_RE.test(text) && textAreaRatio < 0.45) warnings.push("POSSIBLE_DIAGRAM");
   return warnings;
+}
+
+function comparableText(value: string): string { return value.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, ""); }
+function textSimilarity(left: string, right: string): number {
+  if (!left || !right) return 0;
+  if (left.includes(right) || right.includes(left)) return 1;
+  const grams = (value: string) => new Set([...value].map((_, index) => value.slice(index, index + 2)).filter((gram) => gram.length === 2));
+  const leftGrams = grams(left), rightGrams = grams(right); if (!leftGrams.size || !rightGrams.size) return left === right ? 1 : 0;
+  let intersection = 0; for (const gram of leftGrams) if (rightGrams.has(gram)) intersection++;
+  return (2 * intersection) / (leftGrams.size + rightGrams.size);
 }

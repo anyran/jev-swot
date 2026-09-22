@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as ort from "onnxruntime-web/webgpu";
-import { decodeCtc, projectQuadPoint } from "./ocr";
+import { decodeCtc, projectQuadPoint, unrotateBox } from "./ocr";
 
 describe("OCR perspective mapping", () => {
   it("maps destination corners onto a skewed source quadrilateral", () => {
@@ -30,5 +30,15 @@ describe("OCR CTC decoding", () => {
     const decoded = decodeCtc(tensor, ["blank", "A", "B"]);
     expect(decoded.text).toBe("AB");
     expect(decoded.lowConfidenceRatio).toBe(0.5);
+  });
+});
+
+describe("OCR rotation coordinates", () => {
+  it("maps clockwise rotated boxes back to the original crop", () => {
+    const box = unrotateBox({ x: 20, y: 10, width: 30, height: 40, confidence: 1, text: "x" }, 100, 200, 90);
+    expect(box.x).toBe(10);
+    expect(box.y).toBe(150);
+    expect(box.width).toBe(40);
+    expect(box.height).toBe(30);
   });
 });

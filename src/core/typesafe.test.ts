@@ -27,4 +27,12 @@ describe("JEV request mapping", () => {
     expect(result.options.reduce((sum, item) => sum + item.probability, 0)).toBeCloseTo(1);
     expect(result.confidence).toBe(1);
   });
+  it("rejects incomplete Choice probabilities", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ model: "jev-test", answers: { answer: { type: "choice", probabilities: { option_1: .8 }, confidence: .8 } } }), { status: 200 })));
+    await expect(askJev(base, "secret")).rejects.toThrow("未覆盖全部选项");
+  });
+  it("rejects missing independent Noul results", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ model: "jev-test", answers: { option_1: { type: "noul", noul: .8 } } }), { status: 200 })));
+    await expect(askJev({ ...base, questionType: "multiple" }, "secret")).rejects.toThrow("缺少选项 B 的 Noul");
+  });
 });

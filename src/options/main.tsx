@@ -16,16 +16,18 @@ function App() {
   async function save(event: React.FormEvent) {
     event.preventDefault();
     if (secrets.llmApiKey && !await ensureLlmPermission()) return;
-    await Promise.all([setSettings(settings), setSecrets({ ...secrets, typeSafeApiKey: secrets.typeSafeApiKey?.trim(), llmApiKey: secrets.llmApiKey?.trim() })]); setSaved("设置已保存；密钥会在浏览器重启后清除。");
+    await Promise.all([setSettings({ ...settings, llm: { ...settings.llm, baseUrl: settings.llm.baseUrl.trim(), model: settings.llm.model.trim() } }), setSecrets({ ...secrets, typeSafeApiKey: secrets.typeSafeApiKey?.trim(), llmApiKey: secrets.llmApiKey?.trim() })]); setSaved("设置已保存；密钥会在浏览器重启后清除。");
   }
   async function clear() { await chrome.runtime.sendMessage({ type: "CLEAR_SESSION" }); updateSecrets({}); setSaved("会话密钥已清除。"); }
   async function releaseOcr() { await chrome.runtime.sendMessage({ type: "RELEASE_OCR" }); setSaved("OCR 模型内存已释放；下次使用时会重新加载。"); }
   async function testConnections() {
     if (secrets.llmApiKey && !await ensureLlmPermission()) return;
-    await Promise.all([setSettings(settings), setSecrets({ ...secrets, typeSafeApiKey: secrets.typeSafeApiKey?.trim(), llmApiKey: secrets.llmApiKey?.trim() })]); setSaved("正在测试连接…");
-    const canvas = document.createElement("canvas"); canvas.width = 320; canvas.height = 100; const context = canvas.getContext("2d")!; context.fillStyle = "white"; context.fillRect(0, 0, 320, 100); context.fillStyle = "black"; context.font = "28px sans-serif"; context.fillText("2 + 2 = 4", 30, 60);
-    const response = await chrome.runtime.sendMessage({ type: "TEST_CONNECTIONS", imageDataUrl: canvas.toDataURL("image/png") });
-    setSaved(response.ok ? response.diagnostic : response.message);
+    await Promise.all([setSettings({ ...settings, llm: { ...settings.llm, baseUrl: settings.llm.baseUrl.trim(), model: settings.llm.model.trim() } }), setSecrets({ ...secrets, typeSafeApiKey: secrets.typeSafeApiKey?.trim(), llmApiKey: secrets.llmApiKey?.trim() })]); setSaved("正在测试连接…");
+    try {
+      const canvas = document.createElement("canvas"); canvas.width = 320; canvas.height = 100; const context = canvas.getContext("2d")!; context.fillStyle = "white"; context.fillRect(0, 0, 320, 100); context.fillStyle = "black"; context.font = "28px sans-serif"; context.fillText("2 + 2 = 4", 30, 60);
+      const response = await chrome.runtime.sendMessage({ type: "TEST_CONNECTIONS", imageDataUrl: canvas.toDataURL("image/png") });
+      setSaved(response.ok ? response.diagnostic : response.message);
+    } catch (error) { setSaved(error instanceof Error ? error.message : "连接测试失败，请稍后重试。"); }
   }
   async function ensureLlmPermission() {
     let url: URL;

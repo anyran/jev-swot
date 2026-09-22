@@ -35,6 +35,11 @@ describe("DOM extraction", () => {
     question.insertAdjacentHTML("afterbegin", '<img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==">');
     expect(extractFromElement(question).warnings).toContain("VISION_MODEL_REQUIRED");
   });
+  it("keeps accessible image descriptions as question context", () => {
+    const question = document.querySelectorAll(".question")[0];
+    question.insertAdjacentHTML("afterbegin", '<img alt="三角形 ABC，底边为 4" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==">');
+    expect(extractFromElement(question).context).toContain("三角形 ABC");
+  });
   it("extracts table rows and infers explicit multi-select wording", () => {
     document.body.innerHTML = `<section class="question"><h2>多选题：选择所有正确项</h2><table><tbody><tr><td>A.</td><td>甲</td></tr><tr><td>B.</td><td>乙</td></tr></tbody></table></section>`;
     const question = extractFromElement(document.querySelector(".question")!);
