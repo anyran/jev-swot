@@ -119,6 +119,19 @@ describe("compact answer summary", () => {
     close(overlay);
   });
 
+  it("loads question details only after opening a vision answer", () => {
+    const loadDetails = vi.fn();
+    const overlay = new ResultOverlay(vi.fn(), vi.fn(), vi.fn(), vi.fn(), loadDetails);
+    overlay.show({ ok: true, directAnswer: { answerOptionIds: [], answerLabels: ["B"], explanation: "4 是偶数。", knowledgePoints: [], uncertainty: "题干信息充分。", model: "vision-model" }, detailToken: "detail-1", diagnostic: "视觉模型已直接判断答案。" });
+    expect(shadow(overlay).querySelector(".answer-compact")?.textContent).toBe("B");
+    shadow(overlay).querySelector<HTMLElement>('[data-action="toggle-details"]')?.click();
+    expect(loadDetails).toHaveBeenCalledWith("detail-1");
+    expect(shadow(overlay).textContent).toContain("正在识别题干和候选项");
+    overlay.showDetails({ ok: true, question, directAnswer: { answerOptionIds: ["option_2"], answerLabels: ["B"], explanation: "4 是偶数。", knowledgePoints: [], uncertainty: "题干信息充分。", model: "vision-model" } });
+    expect(shadow(overlay).textContent).toContain("Which number is even?");
+    close(overlay);
+  });
+
   it("attaches adaptive palette variables to the compact overlay", () => {
     const overlay = new ResultOverlay(vi.fn(), vi.fn(), vi.fn(), vi.fn());
     overlay.show({ ok: true, question, probability: { mode: "single-distribution", options: [{ id: "option_1", label: "A", probability: 0.1 }, { id: "option_2", label: "B", probability: 0.9 }], confidence: 0.9, model: "jev-test" } });

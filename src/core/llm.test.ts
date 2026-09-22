@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { LlmError, answerWithLlm, parseJsonObject, recognizeWithVision, streamExplanation, structureOcrText, validateLlmBaseUrl } from "./llm";
+import { LlmError, answerWithLlm, answerWithRawText, answerWithVision, parseJsonObject, recognizeWithVision, streamExplanation, structureOcrText, validateLlmBaseUrl } from "./llm";
 import type { LLMSettings } from "../shared/types";
 
 const settings: LLMSettings = { baseUrl: "https://example.test/v1", model: "model", vision: "auto", structuredOutput: "auto" };
@@ -33,6 +33,22 @@ describe("OpenAI-compatible structured output", () => {
     expect(result).toMatchObject({ answerOptionIds: ["option_2"], answerLabels: ["B"], explanation: "4 是偶数。", structuredOutputDetected: "supported" });
     const body = JSON.parse((vi.mocked(fetch).mock.calls[0][1] as RequestInit).body as string);
     expect(body.response_format.json_schema.name).toBe("direct_answer");
+  });
+  it("lets a vision model answer first and keeps question extraction available for details", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ answerOptionLabels: ["B"], explanation: "4 是偶数。", knowledgePoints: ["偶数"], uncertainty: "题干信息充分。" }) } }] }), { status: 200 })));
+    const result = await answerWithVision("data:image/png;base64,AA==", settings, "secret");
+    expect(result.answerOptionLabels).toEqual(["B"]);
+    const body = JSON.parse((vi.mocked(fetch).mock.calls[0][1] as RequestInit).body as string);
+    expect(body.response_format.json_schema.name).toBe("vision_direct_answer");
+    expect(body.messages[1].content.some((part: { type: string }) => part.type === "image_url")).toBe(true);
+  });
+  it("can answer from raw OCR text without inventing a prior split", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ answerOptionLabels: ["B"], explanation: "4 是偶数。", knowledgePoints: ["偶数"], uncertainty: "OCR 清晰。" }) } }] }), { status: 200 })));
+    const result = await answerWithRawText("Which number is even?\nA. 3\nB. 4", settings, "secret");
+    expect(result).toMatchObject({ answerLabels: ["B"], answerOptionIds: [], explanation: "4 是偶数。" });
+    const body = JSON.parse((vi.mocked(fetch).mock.calls[0][1] as RequestInit).body as string);
+    expect(body.response_format.json_schema.name).toBe("raw_text_answer");
+    expect(body.messages[0].content).toContain("原始题目文字");
   });
   it("rejects a direct answer that references an unknown option", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ answerOptionIds: ["option_9"], explanation: "不可靠", knowledgePoints: [], uncertainty: "不确定" }) } }] }), { status: 200 })));

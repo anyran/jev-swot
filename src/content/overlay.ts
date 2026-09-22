@@ -55,10 +55,13 @@ export class ResultOverlay {
   private probability?: ProbabilityResult;
   private directResult?: DirectAnswerResult;
   private preview?: RecognitionPreview;
+  private detailToken?: string;
+  private diagnostic?: string;
+  private detailsLoaded = false;
   private position = { left: 16, top: 16 };
   private expanded = false;
   private captureAuthorized = false;
-  constructor(private retry: (q: ExtractedQuestion, visionConsent?: "allow" | "deny", captureAuthorized?: boolean) => void, private explain: (q: ExtractedQuestion, p: ProbabilityResult) => void, private direct: (q: ExtractedQuestion) => void, private cancel: () => void) {
+  constructor(private retry: (q: ExtractedQuestion, visionConsent?: "allow" | "deny", captureAuthorized?: boolean) => void, private explain: (q: ExtractedQuestion, p: ProbabilityResult) => void, private direct: (q: ExtractedQuestion) => void, private cancel: () => void, private loadDetails: (token: string) => void = () => undefined) {
     this.host.dataset.jevSwotRoot = "true";
     this.root = this.host.attachShadow({ mode: "closed" });
   }
@@ -68,15 +71,21 @@ export class ResultOverlay {
     this.probability = undefined;
     this.directResult = undefined;
     this.preview = undefined;
+    this.detailToken = undefined;
+    this.diagnostic = undefined;
+    this.detailsLoaded = false;
     this.captureAuthorized = false;
     this.host.remove();
   }
-  loading(question: ExtractedQuestion, captureAuthorized = false) { this.question = question; this.probability = undefined; this.directResult = undefined; this.preview = undefined; this.captureAuthorized = captureAuthorized; this.expanded = false; this.progress("正在准备识别…"); }
-  directLoading(question: ExtractedQuestion) { this.question = question; this.probability = undefined; this.directResult = undefined; this.preview = undefined; this.expanded = false; this.progress("正在请求普通模型答题…"); }
+  loading(question: ExtractedQuestion, captureAuthorized = false) { this.question = question; this.probability = undefined; this.directResult = undefined; this.preview = undefined; this.detailToken = undefined; this.diagnostic = undefined; this.detailsLoaded = false; this.captureAuthorized = captureAuthorized; this.expanded = false; this.progress("正在准备识别…"); }
+  directLoading(question: ExtractedQuestion) { this.question = question; this.probability = undefined; this.directResult = undefined; this.preview = undefined; this.detailToken = undefined; this.diagnostic = undefined; this.detailsLoaded = true; this.expanded = false; this.progress("正在请求普通模型答题…"); }
   progress(message: string) { this.render(`<div class="status"><span class="spinner"></span>${escapeHtml(message)} <button data-action="cancel">取消</button></div>`); }
   show(response: WorkerResponse) {
     if (response.question) this.question = response.question;
     if (response.preview) this.preview = response.preview;
+    if (response.ok && response.detailToken) this.detailToken = response.detailToken;
+    if (response.ok && response.diagnostic) this.diagnostic = response.diagnostic;
+    if (response.question) this.detailsLoaded = true;
     if (!response.ok) {
       this.expanded = true;
       const consent = response.code === "VISION_CONSENT_REQUIRED" ? `<div class="actions"><button data-action="local-only">仅本地 OCR（不上传截图）</button><button class="primary" data-action="allow-vision">允许本次上传</button></div>` : "";
@@ -96,6 +105,17 @@ export class ResultOverlay {
     if (!p) return;
     this.expanded = false;
     this.render(this.compact());
+  }
+  detailsLoading() { this.expanded = true; this.render(`<div class="status"><span class="spinner"></span>正在识别题干和候选项… <button data-action="cancel">取消</button></div>`); }
+  showDetails(response: WorkerResponse) {
+    if (!response.ok) { this.show(response); return; }
+    if (response.question) { this.question = response.question; this.detailsLoaded = true; }
+    if (response.preview) this.preview = response.preview;
+    if (response.directAnswer) this.directResult = response.directAnswer;
+    this.detailToken = undefined;
+    this.diagnostic = response.diagnostic ?? this.diagnostic;
+    this.expanded = true;
+    this.render(this.details());
   }
   explanation(text: string) { const node = this.root.querySelector("#explanation"); if (node) node.textContent = text; }
   explanationChunk(text: string) { const node = this.root.querySelector("#explanation"); if (node) node.textContent += text; }
@@ -125,7 +145,9 @@ export class ResultOverlay {
   private directDetails() {
     const result = this.directResult; if (!result) return "";
     const points = result.knowledgePoints.length ? `<ul>${result.knowledgePoints.map((point) => `<li>${escapeHtml(point)}</li>`).join("")}</ul>` : "";
-    return `<div class="detail-view"><p><strong>普通模型答案：${escapeHtml(result.answerLabels.join("、"))}</strong> · ${escapeHtml(result.model)}</p><p class="explanation-copy">${escapeHtml(result.explanation)}</p>${points}<small>不确定性：${escapeHtml(result.uncertainty)}</small>${this.warnings()}<div class="actions"><button data-action="edit">校正题目</button></div></div>`;
+    const recognized = this.detailsLoaded && this.question?.stem ? `<div class="recognized-question"><b>题干</b><p>${escapeHtml(this.question.stem)}</p><b>候选项</b><ol>${this.question.options.map((option) => `<li><strong>${escapeHtml(option.label)}</strong> ${escapeHtml(option.text)}</li>`).join("")}</ol></div>` : `<small>点击详情后识别题干和候选项；当前先显示模型给出的可能答案。</small>`;
+    const diagnostic = this.diagnostic ? `<small>${escapeHtml(this.diagnostic)}</small>` : "";
+    return `<div class="detail-view"><p><strong>可能答案：${escapeHtml(result.answerLabels.join("、"))}</strong> · ${escapeHtml(result.model)}</p>${recognized}${diagnostic}<p class="explanation-copy">${escapeHtml(result.explanation)}</p>${points}<small>不确定性：${escapeHtml(result.uncertainty)}</small>${this.warnings()}<div class="actions"><button data-action="edit">校正题目</button></div></div>`;
   }
   private warnings() { return this.question?.warnings.length ? `<div class="warning">${this.question.warnings.map(warningText).join("；")}</div>` : ""; }
   private editor() {
@@ -150,7 +172,11 @@ export class ResultOverlay {
     this.root.innerHTML = `<style>${CSS_TEXT}</style><section class="${this.expanded ? "expanded" : "compact"}" style="left:${this.position.left}px;top:${this.position.top}px;${paletteStyle}"><header><b>Jev</b><small>Jev SWOT</small><span>${toggle}<button data-action="close">×</button></span></header><main>${content}</main></section>`;
     this.root.querySelector('[data-action="close"]')?.addEventListener("click", () => this.dismiss());
     this.root.querySelector('[data-action="cancel"]')?.addEventListener("click", () => { this.cancel(); this.expanded = true; this.render(`<div class="warning">已取消当前请求。</div>${this.editor()}`); });
-    this.root.querySelector('[data-action="toggle-details"]')?.addEventListener("click", () => { this.expanded = !this.expanded; this.render(this.expanded ? this.details() : this.compact()); });
+    this.root.querySelector('[data-action="toggle-details"]')?.addEventListener("click", () => {
+      if (this.expanded) { this.expanded = false; this.render(this.compact()); return; }
+      if (this.directResult && this.detailToken && !this.detailsLoaded) { this.detailsLoading(); this.loadDetails(this.detailToken); return; }
+      this.expanded = true; this.render(this.details());
+    });
     this.root.querySelector('[data-action="edit"]')?.addEventListener("click", () => { this.expanded = true; this.render(this.editor()); });
     this.root.querySelector('[data-action="explain"]')?.addEventListener("click", () => { if (this.question && this.probability) { this.explanation("正在生成解析…"); this.explain(this.question, this.probability); } });
     this.root.querySelector('[data-action="direct-answer"]')?.addEventListener("click", () => { if (this.question) this.direct(this.question); });

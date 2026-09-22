@@ -33,7 +33,7 @@ try {
     throw new Error(`Extension service worker did not start; observed targets: ${JSON.stringify(targets)}`, { cause: error });
   }
   const extensionId = new URL(target.url()).host;
-  const workerSession = await target.createCDPSession(); let jevRequests = 0, llmRequests = 0, visionRequests = 0, directAnswerRequests = 0, forceVisionUnsupported = false, forceVisionMissingContext = false, forceStructuredMissingIgnored = false, jevInputWasClean = false, multipleJevTargetsExplicit = false;
+  const workerSession = await target.createCDPSession(); let jevRequests = 0, llmRequests = 0, visionRequests = 0, directAnswerRequests = 0, rawAnswerRequests = 0, forceVisionUnsupported = false, forceVisionMissingContext = false, forceStructuredMissingIgnored = false, jevInputWasClean = false, multipleJevTargetsExplicit = false;
   await workerSession.send("Fetch.enable", { patterns: [{ urlPattern: "https://api.typesafe.ai/*", requestStage: "Request" }, { urlPattern: "https://api.openai.com/*", requestStage: "Request" }] });
   workerSession.on("Fetch.requestPaused", (event) => {
     if (event.request.url.startsWith("https://api.typesafe.ai/") && event.request.url.endsWith("/v1/systemone")) {
@@ -78,6 +78,12 @@ try {
         void workerSession.send("Fetch.fulfillRequest", { requestId: event.requestId, responseCode: 200, responseHeaders: [{ name: "content-type", value: "application/json" }], body: Buffer.from(JSON.stringify({ choices: [{ message: { content: JSON.stringify(direct) } }] })).toString("base64") });
         return;
       }
+      if (event.request.postData?.includes("rawText")) {
+        rawAnswerRequests++;
+        const direct = { answerOptionLabels: ["B"], explanation: "4 是偶数。", knowledgePoints: ["偶数可被 2 整除"], uncertainty: "题干信息充分。" };
+        void workerSession.send("Fetch.fulfillRequest", { requestId: event.requestId, responseCode: 200, responseHeaders: [{ name: "content-type", value: "application/json" }], body: Buffer.from(JSON.stringify({ choices: [{ message: { content: JSON.stringify(direct) } }] })).toString("base64") });
+        return;
+      }
       let ocrLineIds = ["line_1", "line_2", "line_3"];
       if (!isVisionRequest && event.request.postData?.includes('"orderedText"')) {
         try {
@@ -89,6 +95,7 @@ try {
         } catch { /* keep deterministic smoke IDs when a provider reshapes the request */ }
       }
       const structured = { questionType: "single", stem: "Which number is even?", context: "", visualDependency: forceVisionMissingContext && isVisionRequest, visualDependencyReason: "", ...(forceStructuredMissingIgnored ? {} : { ignoredText: "Correct answer: B\nExplanation: even numbers are divisible by two", stemLineIds: [ocrLineIds[0]], optionLineIds: [ocrLineIds[1], ocrLineIds[2]], ignoredLineIds: [] }), options: [{ label: "A", text: "3" }, { label: "B", text: "4 Correct answer: B" }] };
+      if (isVisionRequest) Object.assign(structured, { answerOptionLabels: ["B"], explanation: "4 是偶数。", knowledgePoints: ["偶数可被 2 整除"], uncertainty: "题干信息充分。" });
       void workerSession.send("Fetch.fulfillRequest", { requestId: event.requestId, responseCode: 200, responseHeaders: [{ name: "content-type", value: "application/json" }], body: Buffer.from(JSON.stringify({ choices: [{ message: { content: JSON.stringify(structured) } }] })).toString("base64") });
     }
   });
@@ -167,13 +174,20 @@ try {
   const directAnswer = await page.evaluate(async () => {
     await Promise.all([chrome.storage.session.set({ secrets: { llmApiKey: "smoke-llm" } }), chrome.storage.local.set({ savedSecrets: { llmApiKey: "smoke-llm" } })]);
     const question = { source: "dom", questionType: "single", stem: "Which number is even?", options: [{ id: "option_1", label: "A", text: "3" }, { id: "option_2", label: "B", text: "4" }], sourceRect: { x: 0, y: 0, width: 1, height: 1 }, recognitionConfidence: 1, warnings: [] };
-    const gate = await chrome.runtime.sendMessage({ type: "ANALYZE", requestId: crypto.randomUUID(), question, captureAuthorized: true });
-    if (gate?.code !== "JEV_KEY_MISSING" || !gate.question) return { gate, answer: null };
-    const answer = await chrome.runtime.sendMessage({ type: "DIRECT_ANSWER", requestId: crypto.randomUUID(), question: gate.question });
-    return { gate: gate.code, answer };
+    return chrome.runtime.sendMessage({ type: "ANALYZE", requestId: crypto.randomUUID(), question, captureAuthorized: true });
   });
-  if (directAnswer.gate !== "JEV_KEY_MISSING" || !directAnswer.answer?.ok || directAnswer.answer.directAnswer?.answerLabels?.join(",") !== "B") throw new Error(`Ordinary-model direct answer smoke failed: ${JSON.stringify(directAnswer)}`);
+  if (!directAnswer?.ok || directAnswer.directAnswer?.answerLabels?.join(",") !== "B" || !String(directAnswer.diagnostic).includes("未配置 JEV")) throw new Error(`Ordinary-model direct answer smoke failed: ${JSON.stringify(directAnswer)}`);
   if (directAnswerRequests !== 1) throw new Error(`Ordinary-model direct answer request was not observed exactly once (direct=${directAnswerRequests})`);
+  const rawOcrFallback = await page.evaluate(async () => {
+    const canvas = document.createElement("canvas"); canvas.width = 900; canvas.height = 340;
+    const context = canvas.getContext("2d"); context.fillStyle = "white"; context.fillRect(0, 0, canvas.width, canvas.height); context.fillStyle = "black"; context.font = "42px Arial";
+    ["Which number is even?", "A. 3", "B. 4"].forEach((line, index) => context.fillText(line, 40, 75 + index * 90));
+    return chrome.runtime.sendMessage({ type: "ANALYZE", requestId: crypto.randomUUID(), question: { source: "dom", questionType: "unknown", stem: "", options: [], sourceRect: { x: 0, y: 0, width: canvas.width, height: canvas.height }, recognitionConfidence: 0.2, warnings: ["INCOMPLETE_OPTIONS"] }, screenshot: canvas.toDataURL("image/png"), devicePixelRatio: 1, captureAuthorized: true });
+  });
+  if (!rawOcrFallback?.ok || rawOcrFallback.directAnswer?.answerLabels?.join(",") !== "B" || !rawOcrFallback.detailToken) throw new Error(`Raw OCR ordinary-model fallback failed: ${JSON.stringify(rawOcrFallback)}`);
+  if (rawAnswerRequests !== 1 || visionRequests !== 0) throw new Error(`Raw OCR fallback used an unexpected model path (raw=${rawAnswerRequests}, vision=${visionRequests})`);
+  const rawOcrDetails = await page.evaluate(async (detailToken) => chrome.runtime.sendMessage({ type: "LOAD_DETAILS", requestId: crypto.randomUUID(), detailToken }), rawOcrFallback.detailToken);
+  if (!rawOcrDetails?.ok || rawOcrDetails.question?.stem !== "Which number is even?" || rawOcrDetails.directAnswer?.answerLabels?.join(",") !== "B") throw new Error(`Raw OCR details did not return the separated question: ${JSON.stringify(rawOcrDetails)}`);
   const screenshotWithoutGesture = await page.evaluate(() => chrome.runtime.sendMessage({ type: "ANALYZE", requestId: crypto.randomUUID(), question: { source: "dom", questionType: "unknown", stem: "", options: [], sourceRect: { x: 0, y: 0, width: 320, height: 120 }, recognitionConfidence: 0.2, warnings: ["INCOMPLETE_OPTIONS"] }, captureAuthorized: false }));
   if (screenshotWithoutGesture?.code !== "CAPTURE_REQUIRES_SHORTCUT") throw new Error(`Screenshot fallback bypassed the explicit gesture gate: ${JSON.stringify(screenshotWithoutGesture)}`);
   await setSmokeSecrets({ typeSafeApiKey: "smoke-only", llmApiKey: "smoke-llm" });
@@ -221,8 +235,10 @@ try {
     ["Which number is even?", "A. 3", "B. 4"].forEach((line, index) => context.fillText(line, 40, 75 + index * 90));
     return chrome.runtime.sendMessage({ type: "ANALYZE", requestId: crypto.randomUUID(), question: { source: "dom", questionType: "unknown", stem: "", options: [], sourceRect: { x: 0, y: 0, width: canvas.width, height: canvas.height }, recognitionConfidence: 0.2, warnings: ["INCOMPLETE_OPTIONS"] }, screenshot: canvas.toDataURL("image/png"), devicePixelRatio: 1, visionConsent: "allow", captureAuthorized: true });
   });
-  if (!visionSuccess?.ok || !visionSuccess.probability) throw new Error(`Vision recognition smoke returned an invalid response: ${JSON.stringify(visionSuccess)}`);
+  if (!visionSuccess?.ok || visionSuccess.directAnswer?.answerLabels?.join(",") !== "B" || !visionSuccess.detailToken) throw new Error(`Vision direct-answer smoke returned an invalid response: ${JSON.stringify(visionSuccess)}`);
   if (visionRequests !== visionRequestsBeforeSuccess + 1) throw new Error(`Successful vision recognition did not upload exactly one image (vision=${visionRequests})`);
+  const visionDetails = await page.evaluate(async (detailToken) => chrome.runtime.sendMessage({ type: "LOAD_DETAILS", requestId: crypto.randomUUID(), detailToken }), visionSuccess.detailToken);
+  if (!visionDetails?.ok || visionDetails.question?.stem !== "Which number is even?" || visionDetails.directAnswer?.answerLabels?.join(",") !== "B") throw new Error(`Vision details did not lazily return the separated question: ${JSON.stringify(visionDetails)}`);
   forceStructuredMissingIgnored = true;
   const requestsBeforeMissingLedger = jevRequests;
   const missingLedger = await page.evaluate(async () => {
@@ -242,8 +258,8 @@ try {
     ["Which number is even?", "A. 3", "B. 4"].forEach((line, index) => context.fillText(line, 40, 75 + index * 90));
     return chrome.runtime.sendMessage({ type: "ANALYZE", requestId: crypto.randomUUID(), question: { source: "dom", questionType: "unknown", stem: "", options: [], sourceRect: { x: 0, y: 0, width: canvas.width, height: canvas.height }, recognitionConfidence: 0.2, warnings: ["INCOMPLETE_OPTIONS"] }, screenshot: canvas.toDataURL("image/png"), devicePixelRatio: 1, visionConsent: "allow", captureAuthorized: true });
   });
-  if (missingVisionContext?.ok || missingVisionContext?.code !== "STRUCTURE_REVIEW_REQUIRED") throw new Error(`Vision result without usable image semantics bypassed structure review: ${JSON.stringify(missingVisionContext)}`);
-  if (jevRequests !== requestsBeforeMissingVisionContext) throw new Error("Vision result without usable image semantics reached JEV");
+  if (!missingVisionContext?.ok || missingVisionContext.directAnswer?.answerLabels?.join(",") !== "B") throw new Error(`Vision answer-first path failed when detailed context was incomplete: ${JSON.stringify(missingVisionContext)}`);
+  if (jevRequests !== requestsBeforeMissingVisionContext) throw new Error("Vision answer-first path unexpectedly reached JEV");
   forceVisionMissingContext = false;
   forceVisionUnsupported = true;
   const visionRequestsBeforeFallback = visionRequests;
@@ -286,7 +302,7 @@ try {
   await restartedPage.evaluate(() => chrome.runtime.sendMessage({ type: "CLEAR_API_KEYS" }));
   const remainingLocal = await restartedPage.evaluate(() => chrome.storage.local.get("savedSecrets"));
   if (Object.keys(remainingLocal.savedSecrets ?? {}).length !== 0) throw new Error(`Persisted secrets were not cleared: ${Object.keys(remainingLocal.savedSecrets ?? {}).join(", ")}`);
-  console.log(`Chrome loaded Jev 做题家（Jev SWOT） ${extensionId}; DOM→JEV, Canvas→local OCR→text model→JEV, and streaming explanation flows are healthy (${Math.round(ocr.confidence * 100)}%, ${ocr.backend}).`);
+  console.log(`Chrome loaded Jev 做题家（Jev SWOT） ${extensionId}; vision→direct answer/details, OCR→JEV or raw-model fallback, and streaming explanation flows are healthy (${Math.round(ocr.confidence * 100)}%, ${ocr.backend}).`);
 } finally {
   await browser?.close();
   if (server) { server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); }

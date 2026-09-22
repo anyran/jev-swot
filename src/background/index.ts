@@ -1,11 +1,23 @@
 import { askJev } from "../core/typesafe";
-import { LlmError, answerWithLlm, explainAnswer, recognizeWithVision, streamExplanation, structureOcrText } from "../core/llm";
+import { LlmError, answerWithLlm, answerWithRawText, answerWithVision, directAnswerFromLabels, explainAnswer, recognizeWithVision, streamExplanation, structureOcrText } from "../core/llm";
 import { hasQuestionTextConflict, parseQuestionText, requiresRecognitionFallback, sanitizeDomQuestion, validateQuestion } from "../core/question";
 import { hasOcrBoundaryEvidence, hasStructuredQuestionFields, normalizeParsed } from "../core/recognition";
 import { getSecrets, getSettings, setSecrets } from "../shared/storage";
-import type { ExtractedQuestion, RecognitionPreview, WorkerRequest, WorkerResponse } from "../shared/types";
+import type { DirectAnswerResult, ExtractedQuestion, OcrTextBox, RecognitionPreview, WorkerRequest, WorkerResponse } from "../shared/types";
 
 const activeRequests = new Map<string, AbortController>();
+type PendingDetails = {
+  kind: "vision" | "ocr";
+  imageDataUrl: string;
+  width: number;
+  height: number;
+  baseQuestion: ExtractedQuestion;
+  directAnswer: DirectAnswerResult;
+  ocrText?: string;
+  ocrBoxes?: OcrTextBox[];
+  expiresAt: number;
+};
+const pendingDetails = new Map<string, PendingDetails>();
 const PAGE_ORIGINS = ["http://*/*", "https://*/*"] as const;
 const CONTENT_SCRIPT_ID = "jev-swot-content";
 
@@ -115,8 +127,8 @@ async function handle(request: Exclude<WorkerRequest, { type: "OCR" | "CROP_IMAG
     activeRequests.delete(request.requestId);
     return { ok: true };
   }
-  if (request.type === "CLEAR_SESSION") { await chrome.storage.session.clear(); return { ok: true }; }
-  if (request.type === "CLEAR_API_KEYS") { await chrome.storage.session.clear(); await chrome.storage.local.remove("savedSecrets"); return { ok: true }; }
+  if (request.type === "CLEAR_SESSION") { await chrome.storage.session.clear(); pendingDetails.clear(); return { ok: true }; }
+  if (request.type === "CLEAR_API_KEYS") { await chrome.storage.session.clear(); await chrome.storage.local.remove("savedSecrets"); pendingDetails.clear(); return { ok: true }; }
   if (request.type === "RELEASE_OCR") {
     if (await hasOffscreenDocument()) await chrome.offscreen.closeDocument();
     return { ok: true };
@@ -158,6 +170,43 @@ async function handle(request: Exclude<WorkerRequest, { type: "OCR" | "CROP_IMAG
     } else results.push("普通模型：未配置密钥");
     return { ok: true, diagnostic: results.join("；") };
   }
+  if (request.type === "LOAD_DETAILS") {
+    const host = sender.tab?.url ? new URL(sender.tab.url).hostname : "";
+    if (hostDisabled(host, settings.disabledHosts)) return { ok: false, code: "SITE_DISABLED", message: "Jev 做题家已在此站点禁用。", recoverable: true };
+    const pending = pendingDetails.get(request.detailToken);
+    if (!pending || pending.expiresAt < Date.now()) {
+      pendingDetails.delete(request.detailToken);
+      return { ok: false, code: "DETAILS_EXPIRED", message: "识别详情已过期，请重新分析题目。", recoverable: true };
+    }
+    if (!secrets.llmApiKey) return { ok: false, code: "LLM_KEY_MISSING", message: "请先在设置页填写普通模型 API Key，才能读取题干和候选项详情。", recoverable: true };
+    const controller = new AbortController(); activeRequests.set(request.requestId, controller);
+    try {
+      const capabilities = currentCapabilities(settings.llm, secrets);
+      const llm = effectiveLlm(settings.llm, capabilities);
+      let question: ExtractedQuestion;
+      let preview: RecognitionPreview;
+      if (pending.kind === "vision") {
+        const parsed = await recognizeWithVision(pending.imageDataUrl, llm, secrets.llmApiKey, controller.signal);
+        await cacheCapabilities(settings.llm, secrets, "supported", parsed.structuredOutputDetected);
+        if (!hasStructuredQuestionFields(parsed)) throw new LlmError("视觉模型没有返回完整题目结构。", undefined, false, false);
+        question = normalizeParsed(parsed, pending.baseQuestion, "vision", 0.9);
+        preview = { imageDataUrl: pending.imageDataUrl, width: pending.width, height: pending.height, boxes: [], excludedText: parsed.ignoredText?.trim() || undefined };
+      } else {
+        const ocrBoxes = pending.ocrBoxes ?? [];
+        const structured = await structureOcrText(pending.ocrText ?? "", llm, secrets.llmApiKey, controller.signal, ocrBoxes);
+        await cacheCapabilities(settings.llm, secrets, undefined, structured.structuredOutputDetected);
+        question = normalizeParsed(structured, pending.baseQuestion, "local-ocr", pending.baseQuestion.recognitionConfidence, ocrBoxes);
+        if (!hasStructuredQuestionFields(structured, true) || !hasOcrBoundaryEvidence(structured, ocrBoxes)) question.warnings = [...new Set([...question.warnings, "STRUCTURE_REVIEW_REQUIRED"])] as ExtractedQuestion["warnings"];
+        attachOcrRects(question, ocrBoxes, pending.baseQuestion.sourceRect, pending.width, pending.height);
+        preview = { imageDataUrl: pending.imageDataUrl, width: pending.width, height: pending.height, boxes: ocrBoxes, excludedText: structured.ignoredText?.trim() || undefined };
+      }
+      const directAnswer = remapDirectAnswer(question, pending.directAnswer);
+      pendingDetails.delete(request.detailToken);
+      return { ok: true, question, directAnswer, preview };
+    } catch (error) {
+      return { ok: false, code: controller.signal.aborted ? "CANCELLED" : "DETAILS_FAILED", message: controller.signal.aborted ? "已取消详情识别。" : messageOf(error), recoverable: true };
+    } finally { activeRequests.delete(request.requestId); }
+  }
   if (request.type === "EXPLAIN") {
     const host = sender.tab?.url ? new URL(sender.tab.url).hostname : "";
     if (hostDisabled(host, settings.disabledHosts)) return { ok: false, code: "SITE_DISABLED", message: "Jev 做题家已在此站点禁用。", recoverable: true };
@@ -177,9 +226,7 @@ async function handle(request: Exclude<WorkerRequest, { type: "OCR" | "CROP_IMAG
     }
     const controller = new AbortController(); activeRequests.set(request.requestId, controller);
     try {
-      const llm = effectiveLlm(settings.llm, currentCapabilities(settings.llm, secrets));
-      const directAnswer = await answerWithLlm(request.question, llm, secrets.llmApiKey, controller.signal);
-      await cacheCapabilities(settings.llm, secrets, undefined, directAnswer.structuredOutputDetected);
+      const directAnswer = await answerConfirmedQuestion(request.question, settings, secrets, controller.signal);
       return { ok: true, question: request.question, directAnswer };
     } catch (error) {
       return { ok: false, code: controller.signal.aborted ? "CANCELLED" : "DIRECT_ANSWER_FAILED", message: controller.signal.aborted ? "已取消普通模型答题。" : messageOf(error), recoverable: true, question: request.question };
@@ -206,6 +253,9 @@ async function handle(request: Exclude<WorkerRequest, { type: "OCR" | "CROP_IMAG
       catch (error) { throw new CaptureError("无法从当前页面读取截图。请使用 Ctrl/Command + Shift + Y 框选题目后重试。", error); }
       const recognized = await recognizeFallback(question, screenshot, request.devicePixelRatio ?? 1, settings, secrets, request.requestId, controller.signal, request.visionConsent !== "deny", (stage, message) => sendProgress(sender, request.requestId, stage, message));
       question = recognized.question; preview = recognized.preview;
+      if (recognized.directAnswer) {
+        return { ok: true, directAnswer: recognized.directAnswer, detailToken: recognized.detailToken, diagnostic: recognized.diagnostic };
+      }
     }
     if (question.warnings.includes("STRUCTURE_REVIEW_REQUIRED")) {
       return { ok: false, code: "STRUCTURE_REVIEW_REQUIRED", message: "普通模型未完成题目结构化。请在覆盖层中确认题干和选项，排除答案、解析或页面结果文字后再重试。", recoverable: true, question, preview };
@@ -221,7 +271,15 @@ async function handle(request: Exclude<WorkerRequest, { type: "OCR" | "CROP_IMAG
     if (question.source === "local-ocr" && question.warnings.includes("VISION_MODEL_REQUIRED")) {
       return { ok: false, code: "VISION_MODEL_REQUIRED", message: "本题可能依赖图表、几何关系或其他视觉信息，本地 OCR 只能读取文字。请配置支持图像的模型，或在校正界面补充完整的图形描述。", recoverable: true, question, preview };
     }
-    if (!secrets.typeSafeApiKey) return { ok: false, code: "JEV_KEY_MISSING", message: "请先在设置页填写 TypeSafe API Key。", recoverable: true, question, preview };
+    if (!secrets.typeSafeApiKey) {
+      if (!secrets.llmApiKey) return { ok: false, code: "MODEL_KEYS_MISSING", message: "尚未配置 JEV 或普通模型 API Key。请在设置页至少配置一个模型后重试。", recoverable: true, question, preview };
+      try {
+        const directAnswer = await answerConfirmedQuestion(question, settings, secrets, controller.signal);
+        return { ok: true, question, directAnswer, diagnostic: "未配置 JEV，已改用普通模型直接判断。", preview };
+      } catch (error) {
+        return { ok: false, code: controller.signal.aborted ? "CANCELLED" : "DIRECT_ANSWER_FAILED", message: controller.signal.aborted ? "已取消普通模型答题。" : messageOf(error), recoverable: true, question, preview };
+      }
+    }
     sendProgress(sender, request.requestId, "jev", "正在请求 JEV 概率…");
     return { ok: true, question, probability: await askJev(question, secrets.typeSafeApiKey, controller.signal), preview };
   } catch (error) {
@@ -236,7 +294,7 @@ async function handle(request: Exclude<WorkerRequest, { type: "OCR" | "CROP_IMAG
   } finally { activeRequests.delete(request.requestId); }
 }
 
-async function recognizeFallback(base: ExtractedQuestion, screenshot: string, devicePixelRatio: number, settings: Awaited<ReturnType<typeof getSettings>>, secrets: Awaited<ReturnType<typeof getSecrets>>, requestId: string, signal: AbortSignal, allowVision: boolean, progress: (stage: "vision" | "ocr-loading" | "ocr-running", message: string) => void): Promise<{ question: ExtractedQuestion; preview?: RecognitionPreview }> {
+async function recognizeFallback(base: ExtractedQuestion, screenshot: string, devicePixelRatio: number, settings: Awaited<ReturnType<typeof getSettings>>, secrets: Awaited<ReturnType<typeof getSecrets>>, requestId: string, signal: AbortSignal, allowVision: boolean, progress: (stage: "vision" | "ocr-loading" | "ocr-running", message: string) => void): Promise<{ question: ExtractedQuestion; preview?: RecognitionPreview; directAnswer?: DirectAnswerResult; detailToken?: string; diagnostic?: string }> {
   await ensureOffscreen();
   const cropped = await chrome.runtime.sendMessage({ type: "CROP_IMAGE", imageDataUrl: screenshot, rect: base.sourceRect, devicePixelRatio });
   if (!cropped?.ok) throw new Error(cropped?.message ?? "截图裁切失败");
@@ -245,35 +303,31 @@ async function recognizeFallback(base: ExtractedQuestion, screenshot: string, de
   const capabilities = currentCapabilities(settings.llm, secrets);
   const llm = effectiveLlm(settings.llm, capabilities);
   let visionFallbackWarning: "VISION_MODEL_UNSUPPORTED" | "VISION_SERVICE_UNAVAILABLE" | undefined;
-  if (settings.llm.vision === "unsupported" || capabilities.visionDetected === "unsupported") {
-    visionFallbackWarning = "VISION_MODEL_UNSUPPORTED";
-  }
+  if (settings.llm.vision === "unsupported" || capabilities.visionDetected === "unsupported") visionFallbackWarning = "VISION_MODEL_UNSUPPORTED";
   if (allowVision && secrets.llmApiKey && settings.llm.vision !== "unsupported" && (settings.llm.vision === "supported" || capabilities.visionDetected !== "unsupported")) {
-    progress("vision", "正在调用视觉模型识别题目…");
+    progress("vision", "正在让视觉模型直接判断可能答案…");
     try {
-      let parsed: import("../core/llm").StructuredQuestionResult;
-      try { parsed = await recognizeWithVision(questionImage, llm, secrets.llmApiKey, signal); }
+      let answer: import("../core/llm").VisionDirectAnswerResult;
+      try { answer = await answerWithVision(questionImage, llm, secrets.llmApiKey, signal); }
       catch (error) {
         if (signal.aborted) throw error;
         if (!(error instanceof LlmError) || !error.retryable) throw error;
-        parsed = await recognizeWithVision(questionImage, llm, secrets.llmApiKey, signal);
+        answer = await answerWithVision(questionImage, llm, secrets.llmApiKey, signal);
       }
-      await cacheCapabilities(settings.llm, secrets, "supported", parsed.structuredOutputDetected);
+      await cacheCapabilities(settings.llm, secrets, "supported", answer.structuredOutputDetected);
       if (signal.aborted) throw new Error("识别请求已取消。");
-      if (!hasStructuredQuestionFields(parsed)) throw new LlmError("视觉模型返回的题目结构不完整，将改用本地 OCR。", undefined, false, false);
-      const visionQuestion = normalizeParsed(parsed, base, "vision", 0.9);
-      // A successful HTTP response is not enough: malformed or incomplete
-      // vision JSON must continue through local OCR instead of silently
-      // surfacing an unstructured question for JEV.
-      if (!validateQuestion(visionQuestion).every((error) => error === "请确认题目是单选还是多选")) throw new LlmError("视觉模型未提取出完整题目，将改用本地 OCR。", undefined, false, false);
-      return { question: visionQuestion, preview: { imageDataUrl: questionImage, width: cropped.width, height: cropped.height, boxes: [], excludedText: parsed.ignoredText?.trim() || undefined } };
+      // The first visual request is intentionally answer-first.  It only
+      // needs a reliable answer label and explanation; detailed question
+      // boundaries are recognized lazily when the user opens the details.
+      const directAnswer = directAnswerFromLabels(undefined, answer.answerOptionLabels, answer.explanation, answer.knowledgePoints, answer.uncertainty, llm.model, answer.structuredOutputDetected);
+      const detailToken = rememberDetails({ kind: "vision", imageDataUrl: questionImage, width: cropped.width, height: cropped.height, baseQuestion: base, directAnswer });
+      return { question: base, directAnswer, detailToken, diagnostic: "视觉模型已直接判断答案；点击详情后再识别题干和候选项。" };
     } catch (error) {
       if (signal.aborted) throw error;
       if ((error as Error & { unsupportedVision?: boolean }).unsupportedVision) {
         await cacheCapabilities(settings.llm, secrets, "unsupported");
         visionFallbackWarning = "VISION_MODEL_UNSUPPORTED";
-      }
-      else visionFallbackWarning = "VISION_SERVICE_UNAVAILABLE";
+      } else visionFallbackWarning = "VISION_SERVICE_UNAVAILABLE";
     }
   }
   progress("ocr-loading", "正在加载本地 PP-OCRv5 模型…");
@@ -289,6 +343,15 @@ async function recognizeFallback(base: ExtractedQuestion, screenshot: string, de
   parsed.recognitionConfidence = ocr.confidence;
   const inheritedWarnings = base.warnings.filter((warning) => warning !== "INCOMPLETE_OPTIONS");
   parsed.warnings = [...new Set([...inheritedWarnings, ...parsed.warnings, ...(ocr.warnings ?? []), ...(visionFallbackWarning ? [visionFallbackWarning] : [])])];
+  const preview = { imageDataUrl: questionImage, width: cropped.width, height: cropped.height, boxes: (ocr.boxes ?? []) as OcrTextBox[] } satisfies RecognitionPreview;
+  // Without JEV, the ordinary model receives the complete OCR text.  We do not
+  // force a possibly-wrong stem/options split before asking for the answer;
+  // details can perform that auditable split later on demand.
+  if (!secrets.typeSafeApiKey && secrets.llmApiKey && !parsed.warnings.includes("VISION_MODEL_REQUIRED")) {
+    const directAnswer = await answerWithRawText(ocr.text, llm, secrets.llmApiKey, signal);
+    const detailToken = rememberDetails({ kind: "ocr", imageDataUrl: questionImage, width: cropped.width, height: cropped.height, baseQuestion: parsed, directAnswer, ocrText: ocr.text, ocrBoxes: (ocr.boxes ?? []) as OcrTextBox[] });
+    return { question: parsed, directAnswer, detailToken, diagnostic: "未配置 JEV，已将 OCR 原文整体交给普通模型判断；点击详情后再拆分题干和候选项。" };
+  }
   let excludedText = "";
   if (secrets.llmApiKey) {
     try {
@@ -301,13 +364,40 @@ async function recognizeFallback(base: ExtractedQuestion, screenshot: string, de
       if (signal.aborted) throw error;
       parsed.warnings.push("STRUCTURE_REVIEW_REQUIRED");
     }
-  } else {
-    parsed.warnings.push("STRUCTURE_REVIEW_REQUIRED");
-  }
+  } else parsed.warnings.push("STRUCTURE_REVIEW_REQUIRED");
   if (hasQuestionTextConflict(base, parsed)) parsed.warnings.push("DOM_OCR_CONFLICT");
   parsed.warnings = [...new Set(parsed.warnings)];
   attachOcrRects(parsed, ocr.boxes ?? [], base.sourceRect, cropped.width, cropped.height);
-  return { question: parsed, preview: { imageDataUrl: questionImage, width: cropped.width, height: cropped.height, boxes: ocr.boxes ?? [], excludedText: excludedText || undefined } };
+  return { question: parsed, preview: { ...preview, excludedText: excludedText || undefined } };
+}
+
+async function answerConfirmedQuestion(question: ExtractedQuestion, settings: Awaited<ReturnType<typeof getSettings>>, secrets: Awaited<ReturnType<typeof getSecrets>>, signal?: AbortSignal): Promise<DirectAnswerResult> {
+  if (!secrets.llmApiKey) throw new LlmError("请先在设置页填写普通模型 API Key。", undefined, false, false);
+  const llm = effectiveLlm(settings.llm, currentCapabilities(settings.llm, secrets));
+  const directAnswer = await answerWithLlm(question, llm, secrets.llmApiKey, signal);
+  await cacheCapabilities(settings.llm, secrets, undefined, directAnswer.structuredOutputDetected);
+  return directAnswer;
+}
+
+function rememberDetails(details: Omit<PendingDetails, "expiresAt">): string {
+  const token = crypto.randomUUID();
+  const expiresAt = Date.now() + 10 * 60 * 1000;
+  pendingDetails.set(token, { ...details, expiresAt });
+  setTimeout(() => {
+    const current = pendingDetails.get(token);
+    if (current?.expiresAt === expiresAt) pendingDetails.delete(token);
+  }, 10 * 60 * 1000);
+  return token;
+}
+
+function remapDirectAnswer(question: ExtractedQuestion, answer: DirectAnswerResult): DirectAnswerResult {
+  try {
+    return directAnswerFromLabels(question, answer.answerLabels, answer.explanation, answer.knowledgePoints, answer.uncertainty, answer.model, answer.structuredOutputDetected);
+  } catch {
+    // Keep the model's original label-only answer visible so a malformed
+    // details split never erases the already displayed answer.
+    return answer;
+  }
 }
 
 function attachOcrRects(question: ExtractedQuestion, boxes: Array<{ x: number; y: number; width: number; height: number; text: string; confidence: number }>, sourceRect: ExtractedQuestion["sourceRect"], cropWidth: number, cropHeight: number) {
