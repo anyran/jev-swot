@@ -18,7 +18,8 @@
     "verify:models": "node scripts/verify-models.mjs",
     "verify:live": "node scripts/verify-live.mjs",
     "verify:build": "node scripts/verify-build.mjs",
-    "release": "npm run check && npm run check:scripts && npm test && npm run verify:models && npm run build && npm run verify:build && npm run test:smoke && node scripts/package-release.mjs"
+    "audit:prod": "npm audit --omit=dev",
+    "release": "npm run check && npm run check:scripts && npm run audit:prod && npm test && npm run verify:models && npm run build && npm run verify:build && npm run test:smoke && node scripts/package-release.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "6.1.1",
