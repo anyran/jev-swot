@@ -108,7 +108,8 @@ export class ResultOverlay {
     const summary = summarizeAnswer(probability);
     const answer = escapeHtml(summary.label);
     const accessibleLabel = summary.uncertain ? `不确定，倾向 ${answer}` : `答案 ${answer}`;
-    return `<div class="answer-compact" aria-label="${accessibleLabel}"><strong>${answer}</strong></div>`;
+    const uncertainty = summary.uncertain ? ` data-uncertain="true" title="不确定，仅供参考"` : "";
+    return `<div class="answer-compact" aria-label="${accessibleLabel}"${uncertainty}><strong>${answer}</strong></div>`;
   }
   private details() {
     if (this.directResult) return this.directDetails();
@@ -243,6 +244,7 @@ header button{background:transparent;border:0;color:var(--jev-text,#111827);font
 main{padding:10px}
 .answer-compact{display:flex;align-items:baseline;white-space:nowrap;overflow:hidden;color:var(--jev-text,#111827)}
 .answer-compact strong{color:var(--jev-strong,#000);font-size:18px;line-height:1.1;overflow:hidden;text-overflow:ellipsis}
+.answer-compact[data-uncertain="true"] strong{text-decoration:underline dotted;text-decoration-thickness:1px;text-underline-offset:3px}
 .answer-compact small{color:var(--jev-muted,var(--jev-text,#111827))}
 .row{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(48px,1fr) 52px;gap:8px;align-items:center;margin:9px 0}
 .row[data-option-id]{cursor:pointer}

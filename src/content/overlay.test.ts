@@ -49,6 +49,16 @@ describe("compact answer summary", () => {
     expect(summarizeAnswer(probability)).toMatchObject({ label: "A", uncertain: true, detail: "55%" });
   });
 
+  it("marks an uncertain compact answer without adding visible label text", () => {
+    const overlay = new ResultOverlay(vi.fn(), vi.fn(), vi.fn(), vi.fn());
+    overlay.show({ ok: true, question, probability: { mode: "single-distribution", options: [{ id: "option_1", label: "A", probability: 0.55 }, { id: "option_2", label: "B", probability: 0.45 }], confidence: 0.4, model: "jev-test" } });
+    const compact = shadow(overlay).querySelector<HTMLElement>(".answer-compact");
+    expect(compact?.textContent).toBe("A");
+    expect(compact?.dataset.uncertain).toBe("true");
+    expect(compact?.getAttribute("title")).toContain("不确定");
+    close(overlay);
+  });
+
   it("stays conservative when the provider omits confidence", () => {
     expect(summarizeAnswer({
       mode: "single-distribution",
