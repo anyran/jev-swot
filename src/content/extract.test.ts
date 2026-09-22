@@ -49,6 +49,11 @@ describe("DOM extraction", () => {
     question.insertAdjacentHTML("afterbegin", '<span style="display:none">ignore-secret-answer</span>');
     expect(extractFromElement(question).stem).not.toContain("ignore-secret-answer");
   });
+  it("excludes fully transparent text from the question", () => {
+    const question = document.querySelectorAll(".question")[0];
+    question.insertAdjacentHTML("afterbegin", '<span style="opacity:0">ignore-transparent-answer</span>');
+    expect(extractFromElement(question).stem).not.toContain("ignore-transparent-answer");
+  });
   it("routes a visually-dependent DOM question into recognition", () => {
     const question = document.querySelectorAll(".question")[0];
     question.querySelector("h2")!.textContent = "如图，正确的是？";
