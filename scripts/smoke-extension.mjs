@@ -27,7 +27,7 @@ try {
     const canvas = document.createElement("canvas"); canvas.width = 900; canvas.height = 340;
     const context = canvas.getContext("2d"); context.fillStyle = "white"; context.fillRect(0, 0, canvas.width, canvas.height); context.fillStyle = "black"; context.font = "42px Arial";
     ["Which number is even?", "A. 3", "B. 4"].forEach((line, index) => context.fillText(line, 40, 75 + index * 90));
-    return chrome.runtime.sendMessage({ type: "OCR", imageDataUrl: canvas.toDataURL("image/png"), rect: { x: 0, y: 0, width: canvas.width, height: canvas.height }, devicePixelRatio: 1, useWebGpu: false });
+    return chrome.runtime.sendMessage({ type: "OCR", imageDataUrl: canvas.toDataURL("image/png"), rect: { x: 0, y: 0, width: canvas.width, height: canvas.height }, devicePixelRatio: 1, useWebGpu: true });
   });
   if (!ocr?.ok || typeof ocr.text !== "string" || ocr.text.trim().length < 3) throw new Error(`Packaged OCR smoke test failed: ${JSON.stringify(ocr)}`);
   console.log("Smoke: OCR ready; testing page interaction");
@@ -39,7 +39,7 @@ try {
   await questionPage.waitForSelector('[data-jevanswer-root="true"]', { timeout: 5_000 });
   const answerChanged = await questionPage.$eval('input[type="radio"]', (input) => input.checked);
   if (answerChanged) throw new Error("Extension modified the page answer during smoke test");
-  console.log(`Chrome loaded JevAnswer ${extensionId}; service worker, content interaction, options page, and packaged OCR are healthy (${Math.round(ocr.confidence * 100)}%).`);
+  console.log(`Chrome loaded JevAnswer ${extensionId}; service worker, content interaction, options page, and packaged OCR are healthy (${Math.round(ocr.confidence * 100)}%, ${ocr.backend}).`);
 } finally {
   await browser?.close();
   if (server) { server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); }

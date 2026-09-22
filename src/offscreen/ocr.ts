@@ -3,12 +3,13 @@ import { inferVisualWarnings } from "../core/question";
 import type { DOMRectLike, RecognitionWarning } from "../shared/types";
 
 interface Box { x: number; y: number; width: number; height: number; confidence: number }
-export interface OcrResult { text: string; confidence: number; warnings: RecognitionWarning[]; boxes: Array<Box & { text: string }> }
+export interface OcrResult { text: string; confidence: number; warnings: RecognitionWarning[]; boxes: Array<Box & { text: string }>; backend: "wasm" | "webgpu" }
 
 export class PaddleOcr {
   private detector?: ort.InferenceSession;
   private recognizer?: ort.InferenceSession;
   private dictionary?: string[];
+  private backend: "wasm" | "webgpu" = "wasm";
   async initialize(useWebGpu = false): Promise<void> {
     if (this.detector) return;
     const [dictResponse] = await Promise.all([fetch(chrome.runtime.getURL("models/ppocrv5-dict.txt"))]);
@@ -16,6 +17,7 @@ export class PaddleOcr {
     this.dictionary = ["blank", ...(await dictResponse.text()).split(/\r?\n/).filter(Boolean), " "];
     try {
       const executionProviders = useWebGpu && "gpu" in navigator ? ["webgpu", "wasm"] : ["wasm"];
+      this.backend = executionProviders[0] === "webgpu" ? "webgpu" : "wasm";
       [this.detector, this.recognizer] = await Promise.all([
         ort.InferenceSession.create(chrome.runtime.getURL("models/ppocrv5-mobile-det.onnx"), { executionProviders }),
         ort.InferenceSession.create(chrome.runtime.getURL("models/ppocrv5-mobile-rec.onnx"), { executionProviders })
@@ -29,6 +31,15 @@ export class PaddleOcr {
       this.detector = undefined; this.recognizer = undefined;
       await this.initialize(false);
     }
+    try { return await this.recognizeLoaded(dataUrl, rect, dpr); }
+    catch (error) {
+      if (!useWebGpu || this.backend !== "webgpu") throw error;
+      await Promise.allSettled([this.detector?.release(), this.recognizer?.release()]); this.detector = undefined; this.recognizer = undefined; this.backend = "wasm";
+      await this.initialize(false);
+      return this.recognizeLoaded(dataUrl, rect, dpr);
+    }
+  }
+  private async recognizeLoaded(dataUrl: string, rect: DOMRectLike, dpr: number): Promise<OcrResult> {
     const bitmap = await createImageBitmap(await (await fetch(dataUrl)).blob());
     const crop = cropBitmap(bitmap, rect, dpr);
     const candidates = [crop, enhanceGrayscale(crop), adaptiveThreshold(crop)];
@@ -63,7 +74,7 @@ export class PaddleOcr {
     const warnings = inferVisualWarnings(text, textArea);
     if (confidence < 0.72) warnings.push("LOW_OCR_CONFIDENCE");
     if (warnings.includes("POSSIBLE_DIAGRAM")) warnings.push("VISION_MODEL_REQUIRED");
-    return { text, confidence, warnings: [...new Set(warnings)], boxes: results };
+    return { text, confidence, warnings: [...new Set(warnings)], boxes: results, backend: this.backend };
   }
 }
 
