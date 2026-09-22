@@ -127,7 +127,11 @@ async function refreshDisabledState() {
   const settings = await getSettings();
   const host = location.hostname.toLowerCase();
   disabledForSite = settings.disabledHosts.some((entry) => host === entry || host.endsWith(`.${entry}`));
-  if (disabledForSite) overlay.dismiss();
+  if (disabledForSite) {
+    selectionCaptureAuthorized = false;
+    if (selecting) cleanup();
+    overlay.dismiss();
+  }
 }
 async function whenSiteEnabled(action: () => void): Promise<void> {
   await disabledStateReady;
