@@ -22,7 +22,16 @@ const extensionPath = fileURLToPath(new URL("../dist/", import.meta.url)), userD
 let browser, server;
 try {
   browser = await puppeteer.launch({ executablePath, headless: true, userDataDir, enableExtensions: [extensionPath], args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-crash-reporter"] });
-  const target = await browser.waitForTarget((item) => item.type() === "service_worker" && item.url().includes("assets/background.js"), { timeout: 15_000 });
+  let target;
+  try {
+    // macOS runners can take considerably longer to expose an MV3 worker after
+    // Chrome has unpacked a large extension containing OCR models. Keep this
+    // startup wait independent from the per-flow assertions below.
+    target = await browser.waitForTarget((item) => item.type() === "service_worker" && item.url().includes("assets/background.js"), { timeout: 60_000 });
+  } catch (error) {
+    const targets = browser.targets().map((item) => ({ type: item.type(), url: item.url() }));
+    throw new Error(`Extension service worker did not start; observed targets: ${JSON.stringify(targets)}`, { cause: error });
+  }
   const extensionId = new URL(target.url()).host;
   const workerSession = await target.createCDPSession(); let jevRequests = 0, llmRequests = 0, visionRequests = 0, directAnswerRequests = 0, forceVisionUnsupported = false, forceVisionMissingContext = false, forceStructuredMissingIgnored = false, jevInputWasClean = false, multipleJevTargetsExplicit = false;
   await workerSession.send("Fetch.enable", { patterns: [{ urlPattern: "https://api.typesafe.ai/*", requestStage: "Request" }, { urlPattern: "https://api.openai.com/*", requestStage: "Request" }] });
