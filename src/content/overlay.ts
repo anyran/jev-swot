@@ -142,7 +142,9 @@ export class ResultOverlay {
   }
   private render(content: string) {
     if (!this.host.isConnected) document.documentElement.append(this.host);
-    const toggle = this.probability || this.directResult ? `<button data-action="toggle-details">${this.expanded ? "收起" : "详情"}</button>` : "";
+    const toggle = this.probability || this.directResult
+      ? `<button type="button" class="details-toggle" data-action="toggle-details" aria-label="${this.expanded ? "收起详情" : "查看详情"}" title="${this.expanded ? "收起详情" : "查看详情"}"><span class="chevron" aria-hidden="true"></span></button>`
+      : "";
     const palette = this.nearbyPalette();
     const paletteStyle = Object.entries(palette).map(([name, value]) => `--jev-${name}:${value}`).join(";");
     this.root.innerHTML = `<style>${CSS_TEXT}</style><section class="${this.expanded ? "expanded" : "compact"}" style="left:${this.position.left}px;top:${this.position.top}px;${paletteStyle}"><header><b>Jev</b><small>Jev SWOT</small><span>${toggle}<button data-action="close">×</button></span></header><main>${content}</main></section>`;
@@ -241,6 +243,9 @@ section.expanded{width:360px;max-width:calc(100vw - 24px)}
 header{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 10px;border-bottom:0;cursor:move}
 header span{display:flex;gap:4px}
 header button{background:transparent;border:0;color:var(--jev-text,#111827);font-size:12px;padding:2px 5px;text-shadow:inherit}
+.details-toggle{width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center}
+.chevron{display:block;width:7px;height:7px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg);margin-top:-4px}
+.details-toggle[aria-label="收起详情"] .chevron{transform:rotate(225deg);margin-top:4px}
 main{padding:10px}
 .answer-compact{display:flex;align-items:baseline;white-space:nowrap;overflow:hidden;color:var(--jev-text,#111827)}
 .answer-compact strong{color:var(--jev-strong,#000);font-size:18px;line-height:1.1;overflow:hidden;text-overflow:ellipsis}

@@ -112,6 +112,9 @@ describe("compact answer summary", () => {
     expect(shadow(overlay).querySelector(".answer-compact")?.textContent).toBe("B");
     expect(shadow(overlay).querySelector(".answer-compact span")).toBeNull();
     shadow(overlay).querySelector<HTMLElement>('[data-action="toggle-details"]')?.click();
+    const toggle = shadow(overlay).querySelector<HTMLButtonElement>('[data-action="toggle-details"]');
+    expect(toggle?.textContent).toBe("");
+    expect(toggle?.getAttribute("aria-label")).toBe("收起详情");
     expect(shadow(overlay).querySelector('[data-action="direct-answer"]')).not.toBeNull();
     close(overlay);
   });

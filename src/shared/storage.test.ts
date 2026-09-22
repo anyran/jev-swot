@@ -91,4 +91,20 @@ describe("storage normalization", () => {
     });
     await expect(getSecrets()).resolves.toEqual({ typeSafeApiKey: "jev" });
   });
+
+  it("clears capability probes when the ordinary-model credential changes", async () => {
+    const sessionSet = vi.fn();
+    vi.stubGlobal("chrome", {
+      storage: {
+        local: { get: vi.fn(async () => ({ savedSecrets: { typeSafeApiKey: "jev", llmApiKey: "old-llm" } })), set: vi.fn(), remove: vi.fn() },
+        session: {
+          get: vi.fn(async () => ({ secrets: { typeSafeApiKey: "jev", llmApiKey: "old-llm", visionDetected: "unsupported", structuredOutputDetected: "supported", capabilityKey: "old-model" } })),
+          set: sessionSet,
+          clear: vi.fn()
+        }
+      }
+    });
+    await setSecrets({ typeSafeApiKey: "jev", llmApiKey: "new-llm", visionDetected: "unsupported", structuredOutputDetected: "supported", capabilityKey: "old-model" });
+    expect(sessionSet).toHaveBeenCalledWith({ secrets: { typeSafeApiKey: "jev", llmApiKey: "new-llm" } });
+  });
 });

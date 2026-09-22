@@ -63,10 +63,17 @@ export async function getSecrets(): Promise<StoredSecrets> {
 }
 export async function setSecrets(secrets: StoredSecrets): Promise<void> {
   const normalized = normalizeSecrets(secrets);
+  const currentSession = normalizeSecrets((await chrome.storage.session.get("secrets")).secrets);
+  const sessionSecrets = { ...normalized };
+  if (currentSession.llmApiKey !== normalized.llmApiKey) {
+    delete sessionSecrets.visionDetected;
+    delete sessionSecrets.structuredOutputDetected;
+    delete sessionSecrets.capabilityKey;
+  }
   const persisted = {
     ...(normalized.typeSafeApiKey ? { typeSafeApiKey: normalized.typeSafeApiKey } : {}),
     ...(normalized.llmApiKey ? { llmApiKey: normalized.llmApiKey } : {})
   };
-  await chrome.storage.session.set({ secrets: normalized });
+  await chrome.storage.session.set({ secrets: sessionSecrets });
   await chrome.storage.local.set({ savedSecrets: persisted });
 }
