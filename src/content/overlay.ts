@@ -1,5 +1,6 @@
 import type { ExtractedQuestion, ProbabilityResult, RecognitionPreview, WorkerResponse } from "../shared/types";
-import { fallbackOptionLabel } from "../core/question";
+
+function fallbackOptionLabel(index: number): string { return index < 26 ? String.fromCharCode(65 + index) : String(index + 1); }
 
 export class ResultOverlay {
   private host = document.createElement("div");
