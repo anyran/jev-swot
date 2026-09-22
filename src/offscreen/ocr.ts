@@ -31,6 +31,17 @@ export class PaddleOcr {
     }
     const bitmap = await createImageBitmap(await (await fetch(dataUrl)).blob());
     const crop = cropBitmap(bitmap, rect, dpr);
+    const candidates = [crop, enhanceGrayscale(crop), adaptiveThreshold(crop)];
+    const attempts: OcrResult[] = [];
+    for (const candidate of candidates) attempts.push(await this.recognizeVariant(candidate));
+    let best = attempts.reduce((winner, attempt) => qualityScore(attempt) > qualityScore(winner) ? attempt : winner);
+    if (best.confidence < 0.62 && crop.height > crop.width * 1.35) {
+      const rotations = [rotateImage(crop, 90), rotateImage(crop, -90)];
+      for (const rotated of rotations) { const attempt = await this.recognizeVariant(rotated); if (qualityScore(attempt) > qualityScore(best)) best = attempt; }
+    }
+    return best;
+  }
+  private async recognizeVariant(crop: ImageData): Promise<OcrResult> {
     const detImage = resizeForDetection(crop);
     const detTensor = imageTensor(detImage.data, detImage.width, detImage.height, "det");
     const detResult = await this.detector!.run({ [this.detector!.inputNames[0]]: detTensor });
@@ -54,6 +65,38 @@ export class PaddleOcr {
     if (warnings.includes("POSSIBLE_DIAGRAM")) warnings.push("VISION_MODEL_REQUIRED");
     return { text, confidence, warnings: [...new Set(warnings)], boxes: results };
   }
+}
+
+function qualityScore(result: OcrResult): number {
+  const completeness = /(?:^|\n)\s*(?:[A-H]|[1-9]|[①-⑨])[.、)）:]/m.test(result.text) ? 0.08 : 0;
+  return result.confidence + Math.min(0.08, result.boxes.length * 0.005) + completeness;
+}
+function enhanceGrayscale(image: ImageData): ImageData {
+  const output = new ImageData(new Uint8ClampedArray(image.data), image.width, image.height);
+  let sum = 0;
+  for (let i = 0; i < output.data.length; i += 4) sum += output.data[i] * 0.299 + output.data[i + 1] * 0.587 + output.data[i + 2] * 0.114;
+  const mean = sum / (image.width * image.height);
+  for (let i = 0; i < output.data.length; i += 4) {
+    const gray = output.data[i] * 0.299 + output.data[i + 1] * 0.587 + output.data[i + 2] * 0.114;
+    const value = Math.max(0, Math.min(255, (gray - mean) * 1.45 + 128));
+    output.data[i] = output.data[i + 1] = output.data[i + 2] = value;
+  }
+  return output;
+}
+function adaptiveThreshold(image: ImageData): ImageData {
+  const gray = enhanceGrayscale(image), output = new ImageData(image.width, image.height), radius = 8;
+  const integral = new Float64Array((image.width + 1) * (image.height + 1));
+  for (let y = 1; y <= image.height; y++) for (let x = 1, row = 0; x <= image.width; x++) { row += gray.data[((y - 1) * image.width + x - 1) * 4]; integral[y * (image.width + 1) + x] = integral[(y - 1) * (image.width + 1) + x] + row; }
+  for (let y = 0; y < image.height; y++) for (let x = 0; x < image.width; x++) {
+    const x0=Math.max(0,x-radius),x1=Math.min(image.width-1,x+radius),y0=Math.max(0,y-radius),y1=Math.min(image.height-1,y+radius),stride=image.width+1;
+    const local=(integral[(y1+1)*stride+x1+1]-integral[y0*stride+x1+1]-integral[(y1+1)*stride+x0]+integral[y0*stride+x0])/((x1-x0+1)*(y1-y0+1));
+    const value=gray.data[(y*image.width+x)*4] < local-10 ? 0 : 255, offset=(y*image.width+x)*4;
+    output.data[offset]=output.data[offset+1]=output.data[offset+2]=value; output.data[offset+3]=255;
+  }
+  return output;
+}
+function rotateImage(image: ImageData, degrees: 90 | -90): ImageData {
+  const source=new OffscreenCanvas(image.width,image.height),target=new OffscreenCanvas(image.height,image.width);source.getContext("2d")!.putImageData(image,0,0);const ctx=target.getContext("2d")!;ctx.translate(target.width/2,target.height/2);ctx.rotate(degrees*Math.PI/180);ctx.drawImage(source,-image.width/2,-image.height/2);return ctx.getImageData(0,0,target.width,target.height);
 }
 
 function cropBitmap(bitmap: ImageBitmap, rect: DOMRectLike, dpr: number): ImageData {

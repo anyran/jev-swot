@@ -12,11 +12,17 @@ export async function askJev(question: ExtractedQuestion, apiKey: string, signal
   const questions = question.questionType === "multiple"
     ? Object.fromEntries(question.options.map((x) => [x.id, { type: "noul", instructions: `在允许多个正确答案时，选项“${x.label}. ${x.text}”是否应该被选择？` }]))
     : { answer: { type: "choice", instructions: "选择最正确的一个答案。若题目信息不足，也必须诚实地分配不确定概率。", criteria: state.options } };
-  const response = await fetch("https://api.typesafe.ai/v1/systemone", {
-    method: "POST", signal,
+  const init: RequestInit = {
+    method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({ state, model: "jev-latest", questions })
-  });
+  };
+  let response = await timedFetch("https://api.typesafe.ai/v1/systemone", init, signal);
+  if (response.status === 429 || response.status >= 500) {
+    const retryAfter = Math.min(2_000, Number(response.headers.get("retry-after") ?? 0) * 1_000 || 250);
+    await delay(retryAfter, signal);
+    response = await timedFetch("https://api.typesafe.ai/v1/systemone", init, signal);
+  }
   if (!response.ok) throw await apiError("JEV", response);
   const data = await response.json() as { model: string; answers: Record<string, TypeSafeAnswer> };
   if (question.questionType === "multiple") {
@@ -24,6 +30,15 @@ export async function askJev(question: ExtractedQuestion, apiKey: string, signal
   }
   const answer = data.answers.answer as Extract<TypeSafeAnswer, { type: "choice" }>;
   return { mode: "single-distribution", model: data.model, confidence: answer.confidence, options: question.options.map((option) => ({ id: option.id, label: option.label, probability: answer.probabilities[option.id] ?? 0 })) };
+}
+async function timedFetch(url: string, init: RequestInit, signal?: AbortSignal): Promise<Response> {
+  const controller = new AbortController(), timeout = setTimeout(() => controller.abort(new DOMException("JEV 请求超时", "TimeoutError")), 30_000);
+  const abort = () => controller.abort(signal?.reason); signal?.addEventListener("abort", abort, { once: true });
+  try { return await fetch(url, { ...init, signal: controller.signal }); }
+  finally { clearTimeout(timeout); signal?.removeEventListener("abort", abort); }
+}
+function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => { const timer = setTimeout(resolve, ms); signal?.addEventListener("abort", () => { clearTimeout(timer); reject(signal.reason); }, { once: true }); });
 }
 
 async function apiError(name: string, response: Response): Promise<Error> {

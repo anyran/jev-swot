@@ -5,12 +5,16 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "prebuild": "npm run assets:icons",
     "build": "tsc -b && vite build",
     "test": "vitest run",
+    "test:smoke": "node scripts/smoke-extension.mjs",
     "test:watch": "vitest",
     "check": "tsc -b --pretty false",
+    "assets:icons": "node scripts/generate-icons.mjs",
     "models:fetch": "node scripts/fetch-models.mjs",
-    "verify:models": "node scripts/verify-models.mjs"
+    "verify:models": "node scripts/verify-models.mjs",
+    "release": "npm run check && npm test && npm run verify:models && npm run build && npm run test:smoke && node scripts/package-release.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",
@@ -22,7 +26,10 @@
     "@types/chrome": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
+    "archiver": "^8.0.0",
     "jsdom": "latest",
+    "puppeteer-core": "^25.11.0",
+    "sharp": "^0.35.4",
     "typescript": "latest",
     "vite": "latest",
     "vitest": "latest"

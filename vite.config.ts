@@ -20,7 +20,7 @@ export default defineConfig({
         assetFileNames: "assets/[name]-[hash][extname]"
       }
     },
-    sourcemap: true
+    sourcemap: false
   },
   worker: { format: "es" },
   test: { environment: "jsdom", include: ["src/**/*.test.ts"] }

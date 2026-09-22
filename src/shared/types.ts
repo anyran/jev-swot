@@ -8,7 +8,7 @@ export type RecognitionWarning =
   | "VISION_MODEL_REQUIRED";
 
 export interface DOMRectLike { x: number; y: number; width: number; height: number }
-export interface QuestionOption { id: string; label: string; text: string; confidence?: number }
+export interface QuestionOption { id: string; label: string; text: string; confidence?: number; sourceRect?: DOMRectLike }
 export interface ExtractedQuestion {
   source: QuestionSource;
   questionType: QuestionType;
@@ -18,6 +18,8 @@ export interface ExtractedQuestion {
   sourceRect: DOMRectLike;
   recognitionConfidence: number;
   warnings: RecognitionWarning[];
+  visualDependency?: boolean;
+  visualDependencyReason?: string;
 }
 export interface ProbabilityResult {
   mode: "single-distribution" | "independent-selection";
@@ -36,25 +38,29 @@ export interface PersistentSettings {
   llm: LLMSettings;
   ocrThreshold: number;
   useWebGpu: boolean;
+  confirmVisionUpload: boolean;
   disabledHosts: string[];
 }
 export interface SessionSecrets { typeSafeApiKey?: string; llmApiKey?: string; visionDetected?: Capability }
 
 export type WorkerRequest =
-  | { type: "ANALYZE"; question: ExtractedQuestion; screenshot?: string; devicePixelRatio?: number }
-  | { type: "EXPLAIN"; question: ExtractedQuestion; probability: ProbabilityResult }
+  | { type: "ANALYZE"; requestId: string; question: ExtractedQuestion; screenshot?: string; devicePixelRatio?: number; visionConsent?: "allow" | "deny"; captureAuthorized: boolean }
+  | { type: "EXPLAIN"; requestId: string; question: ExtractedQuestion; probability: ProbabilityResult }
+  | { type: "CANCEL"; requestId: string }
   | { type: "OCR"; imageDataUrl: string; rect: DOMRectLike; devicePixelRatio: number; useWebGpu?: boolean }
   | { type: "CROP_IMAGE"; imageDataUrl: string; rect: DOMRectLike; devicePixelRatio: number }
   | { type: "RELEASE_OCR" }
+  | { type: "TEST_CONNECTIONS"; imageDataUrl: string }
   | { type: "CLEAR_SESSION" };
 
 export type WorkerResponse =
-  | { ok: true; question?: ExtractedQuestion; probability?: ProbabilityResult; explanation?: string }
+  | { ok: true; question?: ExtractedQuestion; probability?: ProbabilityResult; explanation?: string; diagnostic?: string }
   | { ok: false; code: string; message: string; recoverable: boolean };
 
 export const DEFAULT_SETTINGS: PersistentSettings = {
   llm: { baseUrl: "https://api.openai.com/v1", model: "gpt-4.1-mini", vision: "auto", structuredOutput: "auto" },
   ocrThreshold: 0.72,
   useWebGpu: false,
+  confirmVisionUpload: true,
   disabledHosts: []
 };

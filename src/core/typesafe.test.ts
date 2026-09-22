@@ -17,4 +17,8 @@ describe("JEV request mapping", () => {
     const result = await askJev({ ...base, questionType: "multiple" }, "secret");
     expect(result.mode).toBe("independent-selection"); expect(result.options.map(x => x.probability)).toEqual([.8, .6]);
   });
+  it("retries one transient service failure", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response("busy", { status: 503 })).mockResolvedValueOnce(new Response(JSON.stringify({ model: "jev-test", answers: { answer: { type: "choice", confidence: .8, probabilities: { option_1: .2, option_2: .8 } } } }), { status: 200 })));
+    await askJev(base, "secret"); expect(fetch).toHaveBeenCalledTimes(2);
+  });
 });

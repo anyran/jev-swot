@@ -39,6 +39,17 @@ npm run build
 给出错误答案。发布 Chrome Web Store 前，必须将 ONNX、字典和 ONNX Runtime WASM
 随扩展打包，并完成 PaddleOCR 与 ONNX Runtime 的许可证审计。
 
+## 发布
+
+```bash
+npm run release
+```
+
+发布命令会执行类型检查、测试、模型哈希校验、图标生成、生产构建并生成
+`release/jevanswer-<version>.zip`。发布前还必须完成
+[`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md) 中的真实 API 和跨平台人工验收。
+隐私数据流见 [`docs/PRIVACY.md`](docs/PRIVACY.md)。
+
 ## 数据与使用边界
 
 插件不会勾选或提交网页答案，也不提供监考规避能力。截图仅在用户主动触发且启用
