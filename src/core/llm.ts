@@ -75,7 +75,14 @@ export async function streamExplanation(question: ExtractedQuestion, probability
   return complete;
 }
 function explanationMessages(question: ExtractedQuestion, probability: ProbabilityResult) {
-  return [{ role: "system", content: "你是学习辅导老师。给出推荐答案、逐项简析、核心知识点和不确定性。不要声称拥有隐藏推理，也不要鼓励考试作弊。" }, { role: "user", content: JSON.stringify({ question, probability }) }];
+  const educationalQuestion = {
+    questionType: question.questionType,
+    stem: question.stem,
+    context: question.context ?? "",
+    options: question.options.map(({ id, label, text }) => ({ id, label, text })),
+    warnings: question.warnings
+  };
+  return [{ role: "system", content: "你是学习辅导老师。给出推荐答案、逐项简析、核心知识点和不确定性。不要声称拥有隐藏推理，也不要鼓励考试作弊。" }, { role: "user", content: JSON.stringify({ question: educationalQuestion, probability }) }];
 }
 function textContent(value: unknown): string {
   if (typeof value === "string") return value;

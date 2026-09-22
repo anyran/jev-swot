@@ -51,4 +51,10 @@ describe("OpenAI-compatible structured output", () => {
     await expect(structureOcrText("ignored", settings, "secret", controller.signal)).rejects.toMatchObject({ retryable: false });
     expect(fetchMock).not.toHaveBeenCalled();
   });
+  it("omits page geometry from explanation requests", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: "解析" } }] }), { status: 200 })));
+    await (await import("./llm")).explainAnswer({ source: "dom", questionType: "single", stem: "q", options: [{ id: "option_1", label: "A", text: "x", sourceRect: { x: 1, y: 2, width: 3, height: 4 } }], sourceRect: { x: 10, y: 20, width: 30, height: 40 }, recognitionConfidence: 1, warnings: [] }, { mode: "single-distribution", options: [], model: "jev" }, settings, "secret");
+    const body = JSON.parse((vi.mocked(fetch).mock.calls[0][1] as RequestInit).body as string);
+    expect(body.messages[1].content).not.toContain("sourceRect");
+  });
 });
