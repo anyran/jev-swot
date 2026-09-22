@@ -114,6 +114,24 @@ describe("compact answer summary", () => {
     close(overlay);
   });
 
+  it("samples a dark page background before choosing the compact palette", () => {
+    const pageSurface = document.createElement("div");
+    pageSurface.style.backgroundColor = "rgb(0, 0, 0)";
+    document.body.append(pageSurface);
+    const previous = (document as Document & { elementsFromPoint?: unknown }).elementsFromPoint;
+    Object.defineProperty(document, "elementsFromPoint", { configurable: true, value: vi.fn(() => [pageSurface]) });
+    const overlay = new ResultOverlay(vi.fn(), vi.fn(), vi.fn(), vi.fn());
+    try {
+      overlay.show({ ok: true, question, probability: { mode: "single-distribution", options: [{ id: "option_1", label: "A", probability: 0.1 }, { id: "option_2", label: "B", probability: 0.9 }], confidence: 0.9, model: "jev-test" } });
+      expect(shadow(overlay).querySelector("section")?.getAttribute("style")).toContain("--jev-text:rgba(255,255,255,.58)");
+    } finally {
+      close(overlay);
+      pageSurface.remove();
+      if (previous) Object.defineProperty(document, "elementsFromPoint", { configurable: true, value: previous });
+      else Reflect.deleteProperty(document, "elementsFromPoint");
+    }
+  });
+
   it("keeps an unknown question type unknown until the user chooses one", () => {
     const overlay = new ResultOverlay(vi.fn(), vi.fn(), vi.fn(), vi.fn());
     overlay.show({ ok: false, code: "STRUCTURE_REVIEW_REQUIRED", message: "请校正", recoverable: true, question: { ...question, questionType: "unknown" } });

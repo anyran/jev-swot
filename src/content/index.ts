@@ -35,6 +35,7 @@ async function getSettings(): Promise<PersistentSettings> {
 let selecting = false;
 let selectionBox: HTMLDivElement | null = null;
 let start = { x: 0, y: 0 };
+let previousCursor = "";
 const overlay = new ResultOverlay(analyze, explain, directAnswer, cancelActive);
 let analysisSequence = 0;
 let activeRequestId: string | undefined;
@@ -91,6 +92,7 @@ document.addEventListener("dblclick", (event) => {
 
 function startSelection() {
   if (selecting) return; selecting = true;
+  previousCursor = document.documentElement.style.cursor;
   document.documentElement.style.cursor = "crosshair";
   document.addEventListener("pointerdown", down, true);
   document.addEventListener("keydown", cancelOnEscape, true);
@@ -110,7 +112,7 @@ function up(event: PointerEvent) {
   const q = extractFromElement(elementFromRect(rect), rect); analyze(q, undefined, captureAuthorized);
 }
 function cancelOnEscape(event: KeyboardEvent) { if (event.key === "Escape") { selectionCaptureAuthorized = false; cleanup(); } }
-function cleanup() { selecting = false; selectionBox?.remove(); selectionBox = null; document.documentElement.style.cursor = ""; document.removeEventListener("pointerdown", down, true); document.removeEventListener("pointermove", move, true); document.removeEventListener("pointerup", up, true); document.removeEventListener("keydown", cancelOnEscape, true); }
+function cleanup() { selecting = false; selectionBox?.remove(); selectionBox = null; document.documentElement.style.cursor = previousCursor; previousCursor = ""; document.removeEventListener("pointerdown", down, true); document.removeEventListener("pointermove", move, true); document.removeEventListener("pointerup", up, true); document.removeEventListener("keydown", cancelOnEscape, true); }
 async function analyze(question: ExtractedQuestion, visionConsent?: "allow" | "deny", captureAuthorized = false) {
   cancelActive(); const sequence = ++analysisSequence, requestId = crypto.randomUUID(); activeRequestId = requestId; overlay.loading(question, captureAuthorized);
   const response = await chrome.runtime.sendMessage({ type: "ANALYZE", requestId, question, devicePixelRatio: window.devicePixelRatio, visionConsent, captureAuthorized }).catch((error: unknown) => ({ ok: false, code: "UNEXPECTED", message: error instanceof Error ? error.message : "扩展后台暂时不可用，请重试。", recoverable: true })) as WorkerResponse;

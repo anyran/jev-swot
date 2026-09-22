@@ -1,6 +1,6 @@
 import type { ExtractedQuestion, ProbabilityResult } from "../shared/types";
 
-type TypeSafeAnswer = { type: "choice"; probabilities: Record<string, number>; confidence: number } | { type: "noul"; noul: number };
+type TypeSafeAnswer = { type: "choice"; probabilities: Record<string, unknown>; confidence?: unknown } | { type: "noul"; noul: unknown };
 
 export async function askJev(question: ExtractedQuestion, apiKey: string, signal?: AbortSignal): Promise<ProbabilityResult> {
   if (signal?.aborted) throw new Error("JEV 请求已取消。");
@@ -49,9 +49,10 @@ export async function askJev(question: ExtractedQuestion, apiKey: string, signal
   if (raw.some((value) => value == null)) throw new Error("JEV 返回的 Choice 概率未覆盖全部选项。");
   const values = raw as number[], total = values.reduce((sum, value) => sum + value, 0);
   if (total <= 0) throw new Error("JEV 返回的 Choice 概率无效。");
-  return { mode: "single-distribution", model: data.model || "jev-latest", confidence: probability(answer.confidence), options: question.options.map((option, index) => ({ id: option.id, label: option.label, probability: values[index] / total })) };
+  const confidence = optionalProbability(answer.confidence);
+  return { mode: "single-distribution", model: data.model || "jev-latest", ...(confidence == null ? {} : { confidence }), options: question.options.map((option, index) => ({ id: option.id, label: option.label, probability: values[index] / total })) };
 }
-function probability(value: unknown): number { const number = Number(value); return Number.isFinite(number) ? Math.max(0, Math.min(1, number)) : 0; }
+function optionalProbability(value: unknown): number | undefined { if (value == null || value === "") return undefined; const number = Number(value); return Number.isFinite(number) ? Math.max(0, Math.min(1, number)) : undefined; }
 function finiteProbability(value: unknown): number | undefined { if (value == null || value === "") return undefined; const number = Number(value); return Number.isFinite(number) ? Math.max(0, Math.min(1, number)) : undefined; }
 async function timedFetch(url: string, init: RequestInit, signal?: AbortSignal): Promise<Response> {
   const controller = new AbortController(), timeout = setTimeout(() => controller.abort(new DOMException("JEV 请求超时", "TimeoutError")), 30_000);

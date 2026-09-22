@@ -33,6 +33,11 @@ describe("JEV request mapping", () => {
     expect(result.options.reduce((sum, item) => sum + item.probability, 0)).toBeCloseTo(1);
     expect(result.confidence).toBe(1);
   });
+  it("keeps omitted Choice confidence optional instead of inventing zero", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ model: "jev-test", answers: { answer: { type: "choice", probabilities: { option_1: .2, option_2: .8 } } } }), { status: 200 })));
+    const result = await askJev(base, "secret");
+    expect(result.confidence).toBeUndefined();
+  });
   it("rejects incomplete Choice probabilities", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ model: "jev-test", answers: { answer: { type: "choice", probabilities: { option_1: .8 }, confidence: .8 } } }), { status: 200 })));
     await expect(askJev(base, "secret")).rejects.toThrow("未覆盖全部选项");
