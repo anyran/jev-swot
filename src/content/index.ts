@@ -41,7 +41,12 @@ document.addEventListener("dblclick", (event) => {
   void whenSiteEnabled(() => {
     event.preventDefault(); event.stopPropagation();
     const target = event.target instanceof Element ? event.target : document.body;
-    analyze(extractFromElement(findQuestionContainer(target)), undefined, false);
+    // Alt + double-click is an explicit user gesture; allow a best-effort
+    // screenshot fallback for image/canvas questions. Chrome may still require
+    // the extension command/action to grant activeTab, in which case the
+    // background returns a recoverable message telling the user to use the
+    // selection shortcut.
+    analyze(extractFromElement(findQuestionContainer(target)), undefined, true);
   });
 }, true);
 
