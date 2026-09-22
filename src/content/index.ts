@@ -35,7 +35,7 @@ async function getSettings(): Promise<PersistentSettings> {
 let selecting = false;
 let selectionBox: HTMLDivElement | null = null;
 let start = { x: 0, y: 0 };
-const overlay = new ResultOverlay(analyze, explain, cancelActive);
+const overlay = new ResultOverlay(analyze, explain, directAnswer, cancelActive);
 let analysisSequence = 0;
 let activeRequestId: string | undefined;
 let explanationPort: chrome.runtime.Port | undefined;
@@ -102,6 +102,17 @@ function explain(question: ExtractedQuestion, probability: ProbabilityResult) {
     if (message.type === "done" || message.type === "error") { port.disconnect(); if (explanationPort === port) explanationPort = undefined; }
   });
   port.postMessage({ question, probability });
+}
+function directAnswer(question: ExtractedQuestion) {
+  cancelActive();
+  const sequence = ++analysisSequence, requestId = crypto.randomUUID();
+  activeRequestId = requestId;
+  overlay.directLoading(question);
+  void chrome.runtime.sendMessage({ type: "DIRECT_ANSWER", requestId, question }).then((response: WorkerResponse) => {
+    if (sequence === analysisSequence) { activeRequestId = undefined; overlay.show(response); }
+  }).catch((error: unknown) => {
+    if (sequence === analysisSequence) { activeRequestId = undefined; overlay.show({ ok: false, code: "DIRECT_ANSWER_FAILED", message: error instanceof Error ? error.message : "普通模型答题失败，请重试。", recoverable: true, question }); }
+  });
 }
 function cancelActive() {
   analysisSequence++;

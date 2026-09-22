@@ -24,7 +24,7 @@ try {
   browser = await puppeteer.launch({ executablePath, headless: true, userDataDir, enableExtensions: [extensionPath], args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-crash-reporter"] });
   const target = await browser.waitForTarget((item) => item.type() === "service_worker" && item.url().includes("assets/background.js"), { timeout: 15_000 });
   const extensionId = new URL(target.url()).host;
-  const workerSession = await target.createCDPSession(); let jevRequests = 0, llmRequests = 0, visionRequests = 0, forceVisionUnsupported = false, forceStructuredMissingIgnored = false, jevInputWasClean = false;
+  const workerSession = await target.createCDPSession(); let jevRequests = 0, llmRequests = 0, visionRequests = 0, directAnswerRequests = 0, forceVisionUnsupported = false, forceStructuredMissingIgnored = false, jevInputWasClean = false;
   await workerSession.send("Fetch.enable", { patterns: [{ urlPattern: "https://api.typesafe.ai/*", requestStage: "Request" }, { urlPattern: "https://api.openai.com/*", requestStage: "Request" }] });
   workerSession.on("Fetch.requestPaused", (event) => {
     if (event.request.url.startsWith("https://api.typesafe.ai/")) {
@@ -50,6 +50,12 @@ try {
       if (event.request.postData?.includes('"stream":true')) {
         const stream = 'data: {"choices":[{"delta":{"content":"答案是 B"}}]}\n\ndata: [DONE]\n\n';
         void workerSession.send("Fetch.fulfillRequest", { requestId: event.requestId, responseCode: 200, responseHeaders: [{ name: "content-type", value: "text/event-stream" }], body: Buffer.from(stream).toString("base64") });
+        return;
+      }
+      if (event.request.postData?.includes("answerOptionIds")) {
+        directAnswerRequests++;
+        const direct = { answerOptionIds: ["option_2"], explanation: "4 是偶数。", knowledgePoints: ["偶数可被 2 整除"], uncertainty: "题干信息充分。" };
+        void workerSession.send("Fetch.fulfillRequest", { requestId: event.requestId, responseCode: 200, responseHeaders: [{ name: "content-type", value: "application/json" }], body: Buffer.from(JSON.stringify({ choices: [{ message: { content: JSON.stringify(direct) } }] })).toString("base64") });
         return;
       }
       const structured = { questionType: "single", stem: "Which number is even?", context: "", visualDependency: false, visualDependencyReason: "", ...(forceStructuredMissingIgnored ? {} : { ignoredText: "Correct answer: B\nExplanation: even numbers are divisible by two" }), options: [{ label: "A", text: "3" }, { label: "B", text: "4 Correct answer: B" }] };
@@ -99,6 +105,17 @@ try {
   await new Promise((resolve, reject) => { const deadline = Date.now() + 5_000; const poll = () => jevRequests ? resolve() : Date.now() > deadline ? reject(new Error("Mock JEV request was not observed")) : setTimeout(poll, 50); poll(); });
   const answerChanged = await questionPage.$eval('input[type="radio"]', (input) => input.checked);
   if (answerChanged) throw new Error("Extension modified the page answer during smoke test");
+  const directAnswer = await page.evaluate(async () => {
+    await chrome.storage.session.set({ secrets: { llmApiKey: "smoke-llm" } });
+    const question = { source: "dom", questionType: "single", stem: "Which number is even?", options: [{ id: "option_1", label: "A", text: "3" }, { id: "option_2", label: "B", text: "4" }], sourceRect: { x: 0, y: 0, width: 1, height: 1 }, recognitionConfidence: 1, warnings: [] };
+    const gate = await chrome.runtime.sendMessage({ type: "ANALYZE", requestId: crypto.randomUUID(), question, captureAuthorized: true });
+    if (gate?.code !== "JEV_KEY_MISSING" || !gate.question) return { gate, answer: null };
+    const answer = await chrome.runtime.sendMessage({ type: "DIRECT_ANSWER", requestId: crypto.randomUUID(), question: gate.question });
+    return { gate: gate.code, answer };
+  });
+  if (directAnswer.gate !== "JEV_KEY_MISSING" || !directAnswer.answer?.ok || directAnswer.answer.directAnswer?.answerLabels?.join(",") !== "B") throw new Error(`Ordinary-model direct answer smoke failed: ${JSON.stringify(directAnswer)}`);
+  if (directAnswerRequests !== 1) throw new Error(`Ordinary-model direct answer request was not observed exactly once (direct=${directAnswerRequests})`);
+  await page.evaluate(() => chrome.storage.session.set({ secrets: { typeSafeApiKey: "smoke-only", llmApiKey: "smoke-llm" } }));
   const fallback = await page.evaluate(async () => {
     const canvas = document.createElement("canvas"); canvas.width = 900; canvas.height = 340;
     const context = canvas.getContext("2d"); context.fillStyle = "white"; context.fillRect(0, 0, canvas.width, canvas.height); context.fillStyle = "black"; context.font = "42px Arial";

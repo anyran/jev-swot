@@ -1,5 +1,5 @@
 import { askJev } from "../core/typesafe";
-import { LlmError, explainAnswer, recognizeWithVision, streamExplanation, structureOcrText } from "../core/llm";
+import { LlmError, answerWithLlm, explainAnswer, recognizeWithVision, streamExplanation, structureOcrText } from "../core/llm";
 import { fallbackOptionLabel, hasQuestionTextConflict, parseQuestionText, requiresRecognitionFallback, stableOptionId, stripExcludedText, validateQuestion } from "../core/question";
 import { getSecrets, getSettings, setSecrets } from "../shared/storage";
 import type { ExtractedQuestion, RecognitionPreview, WorkerRequest, WorkerResponse } from "../shared/types";
@@ -83,6 +83,24 @@ async function handle(request: Exclude<WorkerRequest, { type: "OCR" | "CROP_IMAG
   if (request.type === "EXPLAIN") {
     if (!secrets.llmApiKey) return { ok: false, code: "LLM_KEY_MISSING", message: "请先在设置页填写普通模型 API Key。", recoverable: true };
     return { ok: true, explanation: await explainAnswer(request.question, request.probability, settings.llm, secrets.llmApiKey) };
+  }
+  if (request.type === "DIRECT_ANSWER") {
+    const host = sender.tab?.url ? new URL(sender.tab.url).hostname : "";
+    if (host && settings.disabledHosts.some((entry) => host === entry || host.endsWith(`.${entry}`))) {
+      return { ok: false, code: "SITE_DISABLED", message: "Jev 做题家已在此站点禁用。", recoverable: true };
+    }
+    if (!secrets.llmApiKey) return { ok: false, code: "LLM_KEY_MISSING", message: "请先在设置页填写普通模型 API Key。", recoverable: true, question: request.question };
+    const errors = validateQuestion(request.question);
+    if (errors.length) return { ok: false, code: "QUESTION_INCOMPLETE", message: `${errors.join("；")}。请先在覆盖层中校正题目。`, recoverable: true, question: request.question };
+    if (request.question.warnings.includes("VISION_MODEL_REQUIRED") || request.question.warnings.includes("DOM_OCR_CONFLICT") || request.question.warnings.includes("STRUCTURE_REVIEW_REQUIRED")) {
+      return { ok: false, code: "QUESTION_REVIEW_REQUIRED", message: "这道题仍需要视觉语义或结构校正，请先完成校正后再让普通模型作答。", recoverable: true, question: request.question };
+    }
+    const controller = new AbortController(); activeRequests.set(request.requestId, controller);
+    try {
+      return { ok: true, question: request.question, directAnswer: await answerWithLlm(request.question, settings.llm, secrets.llmApiKey, controller.signal) };
+    } catch (error) {
+      return { ok: false, code: controller.signal.aborted ? "CANCELLED" : "DIRECT_ANSWER_FAILED", message: controller.signal.aborted ? "已取消普通模型答题。" : messageOf(error), recoverable: true, question: request.question };
+    } finally { activeRequests.delete(request.requestId); }
   }
   const host = sender.tab?.url ? new URL(sender.tab.url).hostname : "";
   if (host && settings.disabledHosts.some((entry) => host === entry || host.endsWith(`.${entry}`))) {

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { LlmError, parseJsonObject, recognizeWithVision, streamExplanation, structureOcrText } from "./llm";
+import { LlmError, answerWithLlm, parseJsonObject, recognizeWithVision, streamExplanation, structureOcrText } from "./llm";
 import type { LLMSettings } from "../shared/types";
 
 const settings: LLMSettings = { baseUrl: "https://example.test/v1", model: "model", vision: "auto", structuredOutput: "auto" };
@@ -20,6 +20,17 @@ describe("OpenAI-compatible structured output", () => {
     expect(result.ignoredText).toBe("正确答案：B");
     expect(result.stem).toBe("q");
     expect(result.options).toHaveLength(2);
+  });
+  it("can answer a confirmed question directly with the ordinary model", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ answerOptionIds: ["option_2"], explanation: "4 是偶数。", knowledgePoints: ["偶数可被 2 整除"], uncertainty: "题干信息充分。" }) } }] }), { status: 200 })));
+    const result = await answerWithLlm({ source: "dom", questionType: "single", stem: "哪个数字是偶数？", options: [{ id: "option_1", label: "A", text: "3" }, { id: "option_2", label: "B", text: "4" }], sourceRect: { x: 0, y: 0, width: 1, height: 1 }, recognitionConfidence: 1, warnings: [] }, settings, "secret");
+    expect(result).toMatchObject({ answerOptionIds: ["option_2"], answerLabels: ["B"], explanation: "4 是偶数。" });
+    const body = JSON.parse((vi.mocked(fetch).mock.calls[0][1] as RequestInit).body as string);
+    expect(body.response_format.json_schema.name).toBe("direct_answer");
+  });
+  it("rejects a direct answer that references an unknown option", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ answerOptionIds: ["option_9"], explanation: "不可靠", knowledgePoints: [], uncertainty: "不确定" }) } }] }), { status: 200 })));
+    await expect(answerWithLlm({ source: "dom", questionType: "single", stem: "q", options: [{ id: "option_1", label: "A", text: "x" }, { id: "option_2", label: "B", text: "y" }], sourceRect: { x: 0, y: 0, width: 1, height: 1 }, recognitionConfidence: 1, warnings: [] }, settings, "secret")).rejects.toThrow("不存在的选项");
   });
   it("falls back from json_schema to json_object", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response("unsupported response_format json_schema", { status: 400 })).mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ questionType: "single", stem: "q", context: "", options: [{ label: "A", text: "x" }, { label: "B", text: "y" }] }) } }] }), { status: 200 })));

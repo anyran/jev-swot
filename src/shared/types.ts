@@ -33,6 +33,14 @@ export interface ProbabilityResult {
   confidence?: number;
   model: string;
 }
+export interface DirectAnswerResult {
+  answerOptionIds: string[];
+  answerLabels: string[];
+  explanation: string;
+  knowledgePoints: string[];
+  uncertainty: string;
+  model: string;
+}
 export type Capability = "auto" | "supported" | "unsupported";
 export interface LLMSettings {
   baseUrl: string;
@@ -52,6 +60,7 @@ export interface SessionSecrets { typeSafeApiKey?: string; llmApiKey?: string; v
 export type WorkerRequest =
   | { type: "ANALYZE"; requestId: string; question: ExtractedQuestion; screenshot?: string; devicePixelRatio?: number; visionConsent?: "allow" | "deny"; captureAuthorized: boolean }
   | { type: "EXPLAIN"; requestId: string; question: ExtractedQuestion; probability: ProbabilityResult }
+  | { type: "DIRECT_ANSWER"; requestId: string; question: ExtractedQuestion }
   | { type: "CANCEL"; requestId: string }
   | { type: "OCR"; requestId?: string; imageDataUrl: string; rect: DOMRectLike; devicePixelRatio: number; useWebGpu?: boolean }
   | { type: "CANCEL_OCR"; requestId: string }
@@ -64,7 +73,7 @@ export type AnalysisProgressStage = "capture" | "vision" | "ocr-loading" | "ocr-
 export type RuntimeProgressMessage = { type: "ANALYZE_PROGRESS"; requestId: string; stage: AnalysisProgressStage; message: string };
 
 export type WorkerResponse =
-  | { ok: true; question?: ExtractedQuestion; probability?: ProbabilityResult; explanation?: string; diagnostic?: string; preview?: RecognitionPreview }
+  | { ok: true; question?: ExtractedQuestion; probability?: ProbabilityResult; directAnswer?: DirectAnswerResult; explanation?: string; diagnostic?: string; preview?: RecognitionPreview }
   | { ok: false; code: string; message: string; recoverable: boolean; question?: ExtractedQuestion; preview?: RecognitionPreview };
 
 export const DEFAULT_SETTINGS: PersistentSettings = {
