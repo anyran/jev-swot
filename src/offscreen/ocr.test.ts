@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as ort from "onnxruntime-web/webgpu";
-import { decodeCtc, detectFormulaLayout, PaddleOcr, projectQuadPoint, unrotateBox } from "./ocr";
+import { decodeCtc, detectFormulaLayout, PaddleOcr, projectQuadPoint, sortTextBoxes, unrotateBox } from "./ocr";
 
 describe("OCR perspective mapping", () => {
   it("maps destination corners onto a skewed source quadrilateral", () => {
@@ -58,6 +58,18 @@ describe("OCR visual warning heuristics", () => {
       { x: 0, y: 28, width: 110, height: 20 },
       { x: 0, y: 56, width: 100, height: 20 }
     ])).toBe(false);
+  });
+});
+
+describe("OCR reading order", () => {
+  it("groups overlapping text boxes into rows before sorting left to right", () => {
+    const ordered = sortTextBoxes([
+      { x: 80, y: 42, width: 30, height: 14, text: "B" },
+      { x: 10, y: 8, width: 40, height: 14, text: "题干" },
+      { x: 10, y: 40, width: 30, height: 16, text: "A" },
+      { x: 80, y: 9, width: 30, height: 12, text: "内容" }
+    ]);
+    expect(ordered.map((box) => box.text)).toEqual(["题干", "内容", "A", "B"]);
   });
 });
 

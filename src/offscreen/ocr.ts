@@ -103,7 +103,7 @@ export class PaddleOcr {
       const outputTensor = recResult[this.recognizer!.outputNames[0]];
       batchBoxes.forEach((box, index) => { const decoded = decodeCtc(outputTensor, this.dictionary!, index); if (decoded.text) results.push({ ...box, text: decoded.text, confidence: box.confidence * decoded.confidence, lowConfidenceRatio: decoded.lowConfidenceRatio }); });
     }
-    results.sort((a, b) => Math.abs(a.y - b.y) < Math.max(a.height, b.height) * 0.5 ? a.x - b.x : a.y - b.y);
+    results.splice(0, results.length, ...sortTextBoxes(results));
     const text = results.map((x) => x.text).join("\n");
     const averageConfidence = results.length ? results.reduce((sum, x) => sum + x.confidence, 0) / results.length : 0;
     const lowConfidenceRatio = results.length ? results.reduce((sum, x) => sum + (x.lowConfidenceRatio ?? 1), 0) / results.length : 1;
@@ -242,6 +242,31 @@ export function detectFormulaLayout(boxes: Array<{ x: number; y: number; width: 
   const smallTextBoxes = boxes.filter((box) => box.height <= median * 0.58).length;
   const hasSubscriptLikeLayout = smallTextBoxes >= 2 && smallTextBoxes / boxes.length >= 0.35;
   return thinWide || hasSubscriptLikeLayout;
+}
+export function sortTextBoxes<T extends { x: number; y: number; width: number; height: number }>(boxes: T[]): T[] {
+  type Row = { items: T[]; top: number; bottom: number; center: number };
+  const rows: Row[] = [];
+  for (const box of [...boxes].sort((a, b) => a.y - b.y || a.x - b.x)) {
+    const top = box.y, bottom = box.y + box.height, center = (top + bottom) / 2;
+    let target: Row | undefined;
+    let bestDistance = Infinity;
+    for (const row of rows) {
+      const overlap = Math.min(bottom, row.bottom) - Math.max(top, row.top);
+      const minHeight = Math.min(box.height, row.bottom - row.top);
+      const distance = Math.abs(center - row.center);
+      if (overlap >= minHeight * 0.35 || distance <= Math.max(box.height, row.bottom - row.top) * 0.45) {
+        if (distance < bestDistance) { target = row; bestDistance = distance; }
+      }
+    }
+    if (!target) rows.push({ items: [box], top, bottom, center });
+    else {
+      target.items.push(box);
+      target.top = Math.min(target.top, top);
+      target.bottom = Math.max(target.bottom, bottom);
+      target.center = (target.top + target.bottom) / 2;
+    }
+  }
+  return rows.sort((a, b) => a.top - b.top).flatMap((row) => row.items.sort((a, b) => a.x - b.x));
 }
 function distance(a:Point,b:Point){return Math.hypot(a.x-b.x,a.y-b.y);}
 export function unrotateBox(box: Box & { text: string }, originalWidth: number, originalHeight: number, rotation: 90 | -90): Box & { text: string } {
