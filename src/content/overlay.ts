@@ -10,7 +10,8 @@ export function summarizeAnswer(probability: ProbabilityResult): AnswerSummary {
   }
   const selected = sorted.filter((option) => option.probability >= 0.5);
   const visible = selected.length ? selected : sorted.slice(0, 2);
-  return { label: visible.length ? visible.map((option) => option.label).join("、") : "待确认", uncertain: selected.length === 0, detail: selected.length ? "选择倾向" : "暂无过半概率" };
+  const borderline = sorted.some((option) => Math.abs(option.probability - 0.5) <= 0.09);
+  return { label: visible.length ? visible.map((option) => option.label).join("、") : "待确认", uncertain: selected.length === 0 || borderline, detail: selected.length ? "选择倾向" : "暂无过半概率" };
 }
 
 export class ResultOverlay {
@@ -51,7 +52,8 @@ export class ResultOverlay {
   private details() {
     const p = this.probability; if (!p) return "";
     const rows = [...p.options].sort((a, b) => b.probability - a.probability).map((x) => `<div class="row" data-option-id="${escapeHtml(x.id)}"><b>${escapeHtml(x.label)}</b><div class="bar"><i style="width:${Math.round(x.probability * 100)}%"></i></div><strong>${(x.probability * 100).toFixed(1)}%</strong></div>`).join("");
-    const confidence = p.confidence == null ? "多选项概率相互独立，不合计为 100%" : `整体置信度 ${(p.confidence * 100).toFixed(0)}%${p.confidence < 0.6 ? " · 不确定" : ""}`;
+    const summary = summarizeAnswer(p);
+    const confidence = p.confidence == null ? `多选项概率相互独立，不合计为 100%${summary.uncertain ? " · 不确定" : ""}` : `整体置信度 ${(p.confidence * 100).toFixed(0)}%${summary.uncertain ? " · 不确定" : ""}`;
     return `<div class="detail-view"><div class="rows">${rows}</div><small>${confidence} · ${escapeHtml(p.model)}</small>${this.warnings()}<div class="actions"><button data-action="edit">校正题目</button><button class="primary" data-action="explain">答案解析</button></div><div id="explanation"></div></div>`;
   }
   private warnings() { return this.question?.warnings.length ? `<div class="warning">${this.question.warnings.map(warningText).join("；")}</div>` : ""; }

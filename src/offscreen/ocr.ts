@@ -112,6 +112,7 @@ export class PaddleOcr {
     const structureScore=(firstOption>0?0.05:0)+Math.min(0.1,optionCount*0.05),areaScore=textArea>=0.01?0.05:Math.min(0.05,textArea*5);
     const confidence=Math.max(0,Math.min(1,averageConfidence*0.7+(1-lowConfidenceRatio)*0.1+structureScore+areaScore));
     const warnings = inferVisualWarnings(text, textArea);
+    if (detectFormulaLayout(results)) warnings.push("POSSIBLE_FORMULA");
     if (confidence < 0.72) warnings.push("LOW_OCR_CONFIDENCE");
     if (warnings.includes("POSSIBLE_DIAGRAM") || warnings.includes("POSSIBLE_FORMULA")) warnings.push("VISION_MODEL_REQUIRED");
     return { text, confidence, warnings: [...new Set(warnings)], boxes: results, backend: this.backend, rotation };
@@ -159,7 +160,7 @@ function cropBitmap(bitmap: ImageBitmap, rect: DOMRectLike, dpr: number): ImageD
   const scale = Math.min(2, 2400 / Math.max(w, h), Math.sqrt(MAX_CROP_PIXELS / Math.max(1, w * h)));
   const canvas = new OffscreenCanvas(Math.max(1, Math.round(w * scale)), Math.max(1, Math.round(h * scale)));
   const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
-  ctx.drawImage(bitmap, x, y, w, h, 0, 0, canvas.width, canvas.height); bitmap.close();
+  ctx.drawImage(bitmap, x, y, w, h, 0, 0, canvas.width, canvas.height);
   return ctx.getImageData(0, 0, canvas.width, canvas.height);
 }
 function resizeForDetection(image: ImageData): ImageData {
@@ -231,6 +232,16 @@ export function projectQuadPoint([p0,p1,p2,p3]: [Point,Point,Point,Point],u:numb
   let g=0,h=0;if(Math.abs(den)>1e-8){g=(dx3*dy2-dx2*dy3)/den;h=(dx1*dy3-dx3*dy1)/den;}
   const a=p1.x-p0.x+g*p1.x,b=p3.x-p0.x+h*p3.x,c=p0.x,d=p1.y-p0.y+g*p1.y,e=p3.y-p0.y+h*p3.y,f=p0.y,q=g*u+h*v+1;
   return {x:(a*u+b*v+c)/q,y:(d*u+e*v+f)/q};
+}
+export function detectFormulaLayout(boxes: Array<{ x: number; y: number; width: number; height: number }>): boolean {
+  if (boxes.length < 3) return false;
+  const heights = boxes.map((box) => box.height).sort((a, b) => a - b);
+  const median = heights[Math.floor(heights.length / 2)] ?? 0;
+  if (median <= 0) return false;
+  const thinWide = boxes.some((box) => box.height <= median * 0.35 && box.width >= median * 2.5);
+  const smallTextBoxes = boxes.filter((box) => box.height <= median * 0.58).length;
+  const hasSubscriptLikeLayout = smallTextBoxes >= 2 && smallTextBoxes / boxes.length >= 0.35;
+  return thinWide || hasSubscriptLikeLayout;
 }
 function distance(a:Point,b:Point){return Math.hypot(a.x-b.x,a.y-b.y);}
 export function unrotateBox(box: Box & { text: string }, originalWidth: number, originalHeight: number, rotation: 90 | -90): Box & { text: string } {

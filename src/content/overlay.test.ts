@@ -55,4 +55,13 @@ describe("compact answer summary", () => {
     };
     expect(summarizeAnswer(probability)).toEqual({ label: "A、B", uncertain: true, detail: "暂无过半概率" });
   });
+
+  it("marks a multiple-choice probability near the selection threshold as uncertain", () => {
+    const probability: ProbabilityResult = {
+      mode: "independent-selection",
+      options: [{ id: "option_1", label: "A", probability: 0.51 }, { id: "option_2", label: "B", probability: 0.2 }],
+      model: "jev-test"
+    };
+    expect(summarizeAnswer(probability)).toMatchObject({ label: "A", uncertain: true, detail: "选择倾向" });
+  });
 });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as ort from "onnxruntime-web/webgpu";
-import { decodeCtc, PaddleOcr, projectQuadPoint, unrotateBox } from "./ocr";
+import { decodeCtc, detectFormulaLayout, PaddleOcr, projectQuadPoint, unrotateBox } from "./ocr";
 
 describe("OCR perspective mapping", () => {
   it("maps destination corners onto a skewed source quadrilateral", () => {
@@ -40,6 +40,24 @@ describe("OCR rotation coordinates", () => {
     expect(box.y).toBe(150);
     expect(box.width).toBe(40);
     expect(box.height).toBe(30);
+  });
+});
+
+describe("OCR visual warning heuristics", () => {
+  it("flags a thin fraction-like line and small superscript boxes", () => {
+    expect(detectFormulaLayout([
+      { x: 0, y: 0, width: 60, height: 20 },
+      { x: 0, y: 24, width: 70, height: 2 },
+      { x: 4, y: 32, width: 8, height: 8 },
+      { x: 30, y: 32, width: 8, height: 8 }
+    ])).toBe(true);
+  });
+  it("does not flag ordinary same-size text rows", () => {
+    expect(detectFormulaLayout([
+      { x: 0, y: 0, width: 120, height: 20 },
+      { x: 0, y: 28, width: 110, height: 20 },
+      { x: 0, y: 56, width: 100, height: 20 }
+    ])).toBe(false);
   });
 });
 
