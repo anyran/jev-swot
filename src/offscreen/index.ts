@@ -30,16 +30,19 @@ chrome.runtime.onMessage.addListener((request: WorkerRequest, _sender, sendRespo
 
 async function cropImage(dataUrl: string, rect: { x: number; y: number; width: number; height: number }, dpr: number) {
   const bitmap = await createImageBitmap(await (await fetch(dataUrl)).blob());
-  const left = Math.max(0, Math.min(bitmap.width - 1, Math.round(rect.x * dpr)));
-  const top = Math.max(0, Math.min(bitmap.height - 1, Math.round(rect.y * dpr)));
-  const right = Math.max(left + 1, Math.min(bitmap.width, Math.round((rect.x + rect.width) * dpr)));
-  const bottom = Math.max(top + 1, Math.min(bitmap.height, Math.round((rect.y + rect.height) * dpr)));
-  const x = left, y = top, width = right - left, height = bottom - top;
-  const scale = Math.min(1, 2400 / Math.max(width, height), Math.sqrt(MAX_CROP_PIXELS / Math.max(1, width * height)));
-  const canvas = new OffscreenCanvas(Math.max(1, Math.round(width * scale)), Math.max(1, Math.round(height * scale)));
-  canvas.getContext("2d")!.drawImage(bitmap, x, y, width, height, 0, 0, canvas.width, canvas.height);
-  bitmap.close();
-  return { ok: true, imageDataUrl: await (await canvas.convertToBlob({ type: "image/png" })).arrayBuffer().then(toDataUrl), width: canvas.width, height: canvas.height };
+  try {
+    const left = Math.max(0, Math.min(bitmap.width - 1, Math.round(rect.x * dpr)));
+    const top = Math.max(0, Math.min(bitmap.height - 1, Math.round(rect.y * dpr)));
+    const right = Math.max(left + 1, Math.min(bitmap.width, Math.round((rect.x + rect.width) * dpr)));
+    const bottom = Math.max(top + 1, Math.min(bitmap.height, Math.round((rect.y + rect.height) * dpr)));
+    const x = left, y = top, width = right - left, height = bottom - top;
+    const scale = Math.min(1, 2400 / Math.max(width, height), Math.sqrt(MAX_CROP_PIXELS / Math.max(1, width * height)));
+    const canvas = new OffscreenCanvas(Math.max(1, Math.round(width * scale)), Math.max(1, Math.round(height * scale)));
+    canvas.getContext("2d")!.drawImage(bitmap, x, y, width, height, 0, 0, canvas.width, canvas.height);
+    return { ok: true, imageDataUrl: await (await canvas.convertToBlob({ type: "image/png" })).arrayBuffer().then(toDataUrl), width: canvas.width, height: canvas.height };
+  } finally {
+    bitmap.close();
+  }
 }
 function toDataUrl(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer); let binary = "";

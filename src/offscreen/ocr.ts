@@ -19,14 +19,20 @@ export class PaddleOcr {
     const [dictResponse] = await Promise.all([fetch(chrome.runtime.getURL("models/ppocrv5-dict.txt"))]);
     if (!dictResponse.ok) throw new Error("PP-OCRv5 模型尚未安装；请参照 models/README.md 放置并校验模型资产。");
     this.dictionary = ["blank", ...(await dictResponse.text()).split(/\r?\n/).filter(Boolean), " "];
+    let detector: ort.InferenceSession | undefined;
+    let recognizer: ort.InferenceSession | undefined;
     try {
       const executionProviders = useWebGpu && "gpu" in navigator ? ["webgpu", "wasm"] : ["wasm"];
       this.backend = executionProviders[0] === "webgpu" ? "webgpu" : "wasm";
-      [this.detector, this.recognizer] = await Promise.all([
-        ort.InferenceSession.create(chrome.runtime.getURL("models/ppocrv5-mobile-det.onnx"), { executionProviders }),
-        ort.InferenceSession.create(chrome.runtime.getURL("models/ppocrv5-mobile-rec.onnx"), { executionProviders })
-      ]);
-    } catch (error) { await this.releaseSessions(); throw new Error(`无法加载 PP-OCRv5：${error instanceof Error ? error.message : String(error)}`); }
+      detector = await ort.InferenceSession.create(chrome.runtime.getURL("models/ppocrv5-mobile-det.onnx"), { executionProviders });
+      recognizer = await ort.InferenceSession.create(chrome.runtime.getURL("models/ppocrv5-mobile-rec.onnx"), { executionProviders });
+      this.detector = detector;
+      this.recognizer = recognizer;
+    } catch (error) {
+      await Promise.allSettled([detector?.release(), recognizer?.release()]);
+      await this.releaseSessions();
+      throw new Error(`无法加载 PP-OCRv5：${error instanceof Error ? error.message : String(error)}`);
+    }
   }
   async recognize(dataUrl: string, rect: DOMRectLike, dpr: number, useWebGpu = false, signal?: AbortSignal): Promise<OcrResult> {
     throwIfAborted(signal);
@@ -55,8 +61,13 @@ export class PaddleOcr {
   private async recognizeLoaded(dataUrl: string, rect: DOMRectLike, dpr: number, signal?: AbortSignal): Promise<OcrResult> {
     throwIfAborted(signal);
     const bitmap = await createImageBitmap(await (await fetch(dataUrl)).blob());
-    throwIfAborted(signal);
-    const crop = cropBitmap(bitmap, rect, dpr);
+    let crop: ImageData;
+    try {
+      throwIfAborted(signal);
+      crop = cropBitmap(bitmap, rect, dpr);
+    } finally {
+      bitmap.close();
+    }
     const candidates = [crop, enhanceGrayscale(crop), adaptiveThreshold(crop)];
     const attempts: OcrResult[] = [];
     for (const candidate of candidates) { throwIfAborted(signal); attempts.push(await this.recognizeVariant(candidate, 0, signal)); }
