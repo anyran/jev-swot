@@ -1,4 +1,3 @@
-import { parseOptionLine } from "../core/question";
 import type { ExtractedQuestion, QuestionOption, RecognitionWarning } from "../shared/types";
 
 const EXCLUDED = "script,style,noscript,nav,header,footer,aside,iframe,[role='banner'],[role='navigation'],[role='complementary'],[hidden],[aria-hidden='true'],[data-jev-swot-root],[data-ad],[data-advertisement],[aria-label*='advertisement' i],[aria-label*='广告'],[class~='ad'],[class*=' ad-'],[class^='ad-'],[class*='advertisement' i],[id*='advertisement' i]";
@@ -6,7 +5,18 @@ const VISUAL_CUE = /(?:如图|下图|图中|曲线|折线|柱状|散点|阴影|�
 const FORMULA_CUE = /[∑√∫≈≠≤≥±×÷∞∂∇∈∉∝→←↔^]|[⁰¹²³⁴⁵⁶⁷⁸⁹₀₁₂₃₄₅₆₇₈₉]|\b(?:sin|cos|tan|log|ln|lim)\b|\$[^$]+\$/i;
 const MULTIPLE_CUE = /(?:多选|可多选|选择所有|所有正确|select all|multiple choice)/i;
 const SINGLE_CUE = /(?:单选|只能选择一项|判断题|single choice|true or false)/i;
+// Keep this tiny parser local: the content entry must remain a classic,
+// self-contained MV3 script.  It mirrors core/question.ts, which is used by
+// OCR and the background worker.
+const OPTION_RE = /^\s*(?:(?:([A-Ha-h])(?:[.、)）:]|\s+))|(?:([1-9]\d{0,2})[.、)）:])|(?:([①②③④⑤⑥⑦⑧⑨])[.、)）:]))\s*(.+)$/;
+const MARKED_OPTION_RE = /^\s*(?:\[\s*[xX✓✔]?\s*\]|[☐☑□■○●◯◉◒✓✔])\s*(?:(?:([A-Ha-h])(?:[.、)）:]|\s+))|(?:([1-9]\d{0,2})[.、)）:])|(?:([①②③④⑤⑥⑦⑧⑨])[.、)）:]))?\s*(.+)$/u;
 function fallbackOptionLabel(index: number): string { return index < 26 ? String.fromCharCode(65 + index) : String(index + 1); }
+function parseOptionLine(line: string, index: number): { label: string; text: string } | undefined {
+  const match = OPTION_RE.exec(line), markedMatch = match ? undefined : MARKED_OPTION_RE.exec(line);
+  if (match) return { label: match[1]?.toUpperCase() || match[2] || match[3]!, text: match[4] };
+  if (markedMatch) return { label: markedMatch[1]?.toUpperCase() || markedMatch[2] || markedMatch[3] || fallbackOptionLabel(index), text: markedMatch[4] };
+  return undefined;
+}
 function visible(element: Element): boolean {
   const style = getComputedStyle(element);
   const rect = element.getBoundingClientRect();
