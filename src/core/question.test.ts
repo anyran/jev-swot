@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fallbackOptionLabel, hasQuestionStructure, hasQuestionTextConflict, parseQuestionText, requiresRecognitionFallback, stripExcludedText, validateQuestion } from "./question";
+import { fallbackOptionLabel, hasQuestionStructure, hasQuestionTextConflict, parseQuestionText, requiresRecognitionFallback, sanitizeDomQuestion, stripExcludedText, validateQuestion } from "./question";
 
 describe("question parsing", () => {
   it("parses labelled options", () => {
@@ -86,5 +86,22 @@ describe("question parsing", () => {
     expect(stripExcludedText("哪个数字是偶数？\nA. 3\nB. 4\n答案：B")).toBe("哪个数字是偶数？\nA. 3\nB. 4");
     expect(stripExcludedText("Which number is even?\nA. 3\nB. 4\nAnswer: B")).toBe("Which number is even?\nA. 3\nB. 4");
     expect(stripExcludedText("答案是什么？\nA. 3\nB. 4")).toBe("答案是什么？\nA. 3\nB. 4");
+  });
+  it("sanitizes result annotations from complete DOM questions", () => {
+    const question = {
+      ...parseQuestionText("哪个数字是偶数？\nA. 3\nB. 4"),
+      source: "dom" as const,
+      questionType: "single" as const,
+      context: "正确答案：B\n解析：偶数能被二整除。"
+    };
+    question.options[1].text = "4 正确答案：B";
+    const sanitized = sanitizeDomQuestion(question);
+    expect(sanitized.stem).toBe("哪个数字是偶数？");
+    expect(sanitized.options[1].text).toBe("4");
+    expect(sanitized.context).toBe("");
+  });
+  it("does not rewrite user-edited question text", () => {
+    const question = { ...parseQuestionText("答案：B\nA. 3\nB. 4"), source: "user-edited" as const };
+    expect(sanitizeDomQuestion(question)).toEqual(question);
   });
 });

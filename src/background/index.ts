@@ -1,6 +1,6 @@
 import { askJev } from "../core/typesafe";
 import { LlmError, answerWithLlm, explainAnswer, recognizeWithVision, streamExplanation, structureOcrText } from "../core/llm";
-import { hasQuestionTextConflict, parseQuestionText, requiresRecognitionFallback, validateQuestion } from "../core/question";
+import { hasQuestionTextConflict, parseQuestionText, requiresRecognitionFallback, sanitizeDomQuestion, validateQuestion } from "../core/question";
 import { hasStructuredQuestionFields, normalizeParsed } from "../core/recognition";
 import { getSecrets, getSettings, setSecrets } from "../shared/storage";
 import type { ExtractedQuestion, RecognitionPreview, WorkerRequest, WorkerResponse } from "../shared/types";
@@ -149,7 +149,7 @@ async function handle(request: Exclude<WorkerRequest, { type: "OCR" | "CROP_IMAG
     return { ok: false, code: "SITE_DISABLED", message: "Jev 做题家已在此站点禁用。", recoverable: true };
   }
   const controller = new AbortController(); activeRequests.set(request.requestId, controller);
-  let question = request.question;
+  let question = sanitizeDomQuestion(request.question);
   let preview: RecognitionPreview | undefined;
   try {
     if (requiresRecognitionFallback(question)) {

@@ -125,6 +125,20 @@ export function stripExcludedText(value: string, ignoredText = ""): string {
   }).filter(Boolean).join("\n").trim();
 }
 
+/**
+ * Keep the DOM fast path from carrying review-page result annotations into
+ * JEV. OCR and vision paths already pass through model-led normalization; this
+ * conservative sanitizer gives complete DOM questions the same boundary while
+ * leaving user-edited text untouched.
+ */
+export function sanitizeDomQuestion(question: ExtractedQuestion): ExtractedQuestion {
+  if (question.source !== "dom") return question;
+  const stem = stripExcludedText(question.stem);
+  const context = question.context == null ? question.context : stripExcludedText(question.context);
+  const options = question.options.map((option) => ({ ...option, text: stripExcludedText(option.text) }));
+  return { ...question, stem, context, options };
+}
+
 function comparableText(value: string): string { return value.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, ""); }
 function comparableModelText(value: string): string { return value.toLocaleLowerCase().replace(/\s+/g, "").replace(/[，。！？、:：;；]+$/u, ""); }
 function textSimilarity(left: string, right: string): number {
