@@ -67,4 +67,28 @@ describe("storage normalization", () => {
     await setSecrets({ typeSafeApiKey: "jev" });
     expect(localSet).toHaveBeenCalledWith({ savedSecrets: { typeSafeApiKey: "jev" } });
   });
+
+  it("keeps capability probes in the session instead of persisting them", async () => {
+    const localSet = vi.fn();
+    const sessionSet = vi.fn();
+    vi.stubGlobal("chrome", {
+      storage: {
+        local: { get: vi.fn(async () => ({ savedSecrets: {} })), set: localSet, remove: vi.fn() },
+        session: { get: vi.fn(async () => ({ secrets: {} })), set: sessionSet, clear: vi.fn() }
+      }
+    });
+    await setSecrets({ typeSafeApiKey: "jev", visionDetected: "unsupported", structuredOutputDetected: "supported", capabilityKey: "model" });
+    expect(sessionSet).toHaveBeenCalledWith({ secrets: { typeSafeApiKey: "jev", visionDetected: "unsupported", structuredOutputDetected: "supported", capabilityKey: "model" } });
+    expect(localSet).toHaveBeenCalledWith({ savedSecrets: { typeSafeApiKey: "jev" } });
+  });
+
+  it("does not restore persisted capability probes after the session is empty", async () => {
+    vi.stubGlobal("chrome", {
+      storage: {
+        local: { get: vi.fn(async (key: string) => key === "savedSecrets" ? { savedSecrets: { typeSafeApiKey: "jev", visionDetected: "unsupported", capabilityKey: "old-model" } } : { settings: {} }), set: vi.fn(), remove: vi.fn() },
+        session: { get: vi.fn(async () => ({ secrets: {} })), set: vi.fn(), clear: vi.fn() }
+      }
+    });
+    await expect(getSecrets()).resolves.toEqual({ typeSafeApiKey: "jev" });
+  });
 });

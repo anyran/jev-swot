@@ -52,13 +52,21 @@ export async function getSecrets(): Promise<StoredSecrets> {
   ]);
   const sessionSecrets = normalizeSecrets(sessionStored.secrets);
   const savedSecrets = normalizeSecrets(localStored.savedSecrets);
-  // Session values are newer than persisted values (for example after the
-  // user changes a key without restarting Chrome), while persisted values
-  // restore the configuration after a browser restart.
-  return { ...savedSecrets, ...sessionSecrets };
+  // Only credentials are restored from the persistent profile. Capability
+  // probes are intentionally session-scoped so a model change, a session
+  // clear, or a browser restart forces a fresh capability decision.
+  return {
+    ...(savedSecrets.typeSafeApiKey ? { typeSafeApiKey: savedSecrets.typeSafeApiKey } : {}),
+    ...(savedSecrets.llmApiKey ? { llmApiKey: savedSecrets.llmApiKey } : {}),
+    ...sessionSecrets
+  };
 }
 export async function setSecrets(secrets: StoredSecrets): Promise<void> {
   const normalized = normalizeSecrets(secrets);
+  const persisted = {
+    ...(normalized.typeSafeApiKey ? { typeSafeApiKey: normalized.typeSafeApiKey } : {}),
+    ...(normalized.llmApiKey ? { llmApiKey: normalized.llmApiKey } : {})
+  };
   await chrome.storage.session.set({ secrets: normalized });
-  await chrome.storage.local.set({ savedSecrets: normalized });
+  await chrome.storage.local.set({ savedSecrets: persisted });
 }

@@ -239,6 +239,7 @@ try {
   await restartedPage.goto(`chrome-extension://${extensionId}/options.html`, { waitUntil: "domcontentloaded" });
   const persistedAfterRestart = await restartedPage.evaluate(() => chrome.storage.local.get(["settings", "savedSecrets"]));
   if (persistedAfterRestart.settings?.llm?.model !== "smoke-model" || persistedAfterRestart.savedSecrets?.typeSafeApiKey !== "smoke-only" || persistedAfterRestart.savedSecrets?.llmApiKey !== "smoke-llm") throw new Error(`Local configuration did not survive a browser restart: ${JSON.stringify(persistedAfterRestart)}`);
+  if (persistedAfterRestart.savedSecrets?.visionDetected || persistedAfterRestart.savedSecrets?.structuredOutputDetected || persistedAfterRestart.savedSecrets?.capabilityKey) throw new Error("Capability probes unexpectedly persisted outside the browser session");
   await restartedPage.evaluate(() => chrome.runtime.sendMessage({ type: "CLEAR_SESSION" }));
   const remainingSession = await restartedPage.evaluate(() => chrome.storage.session.get(null));
   if (Object.keys(remainingSession).length !== 0) throw new Error(`Session secrets were not cleared: ${Object.keys(remainingSession).join(", ")}`);
