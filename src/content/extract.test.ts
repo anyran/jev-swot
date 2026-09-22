@@ -77,6 +77,12 @@ describe("DOM extraction", () => {
     expect(question.questionType).toBe("multiple");
     expect(question.options.map((option) => option.text)).toEqual(["甲", "乙"]);
   });
+  it("normalizes checkbox glyphs in DOM option labels", () => {
+    document.body.innerHTML = `<section class="question"><h2>请选择所有偶数</h2><label><input type="checkbox">☐ A. 2</label><label><input type="checkbox">☑ B. 3</label></section>`;
+    const question = extractFromElement(document.querySelector(".question")!);
+    expect(question.options.map((option) => [option.label, option.text])).toEqual([["A", "2"], ["B", "3"]]);
+    expect(question.questionType).toBe("multiple");
+  });
   it("marks formula text without pretending it is image semantics", () => {
     const element = document.querySelectorAll(".question")[0];
     element.querySelector("h2")!.textContent = "sin(x) 的值是？";

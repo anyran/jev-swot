@@ -1,3 +1,4 @@
+import { parseOptionLine } from "../core/question";
 import type { ExtractedQuestion, QuestionOption, RecognitionWarning } from "../shared/types";
 
 const EXCLUDED = "script,style,noscript,nav,header,footer,aside,iframe,[role='banner'],[role='navigation'],[role='complementary'],[hidden],[aria-hidden='true'],[data-jev-swot-root],[data-ad],[data-advertisement],[aria-label*='advertisement' i],[aria-label*='广告'],[class~='ad'],[class*=' ad-'],[class^='ad-'],[class*='advertisement' i],[id*='advertisement' i]";
@@ -90,8 +91,8 @@ export function extractFromElement(element: Element, clip?: { x: number; y: numb
   const dedup = [...new Set(optionElements)];
   const options: QuestionOption[] = dedup.map((node, index) => {
     const raw = cleanText(visibleText(node, clip) || node.getAttribute("aria-label") || node.getAttribute("title") || node.querySelector("input, [role=radio], [role=checkbox], [role=option]")?.getAttribute("aria-label") || "");
-    const match = /^\s*([A-Ha-h]|[1-9]\d{0,2}|[①②③④⑤⑥⑦⑧⑨])(?:[.、)）:]|\s+)\s*(.*)$/.exec(raw);
-    return { id: `option_${index + 1}`, label: match?.[1]?.toUpperCase() ?? fallbackOptionLabel(index), text: match?.[2] || raw };
+    const parsed = parseOptionLine(raw, index);
+    return { id: `option_${index + 1}`, label: parsed?.label ?? fallbackOptionLabel(index), text: parsed?.text || raw };
   }).filter((x) => x.text);
   const allText = visibleText(element, clip);
   let stem = allText;

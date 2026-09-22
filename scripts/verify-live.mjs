@@ -7,7 +7,7 @@ if (!typeSafeApiKey) {
   process.exit(2);
 }
 
-const single = await requestJev(typeSafeApiKey, {
+  const single = await requestJev(typeSafeApiKey, {
   questionType: "single",
   stem: "2 + 2 等于多少？",
   options: [
@@ -15,6 +15,7 @@ const single = await requestJev(typeSafeApiKey, {
     { id: "option_2", label: "B", text: "4" }
   ]
 });
+if (single.answers?.answer?.type !== "choice") fail("TypeSafe single-choice response was not a Choice result.");
 const singleProbabilities = [single.answers?.answer?.probabilities?.option_1, single.answers?.answer?.probabilities?.option_2].map(numberValue);
 if (singleProbabilities.some((value) => value == null)) fail("TypeSafe Choice response did not include both option probabilities.");
 const singleTotal = singleProbabilities.reduce((sum, value) => sum + value, 0);
@@ -50,7 +51,7 @@ if (llmValues.every((value) => !value)) {
     response_format: { type: "json_object" }
   });
   const structured = parseJsonObject(readContent(textResponse));
-  if (!structured || !["single", "multiple", "unknown"].includes(structured.questionType) || typeof structured.stem !== "string" || !Array.isArray(structured.options) || structured.options.length < 2 || typeof structured.context !== "string" || typeof structured.visualDependency !== "boolean" || typeof structured.visualDependencyReason !== "string" || typeof structured.ignoredText !== "string") {
+  if (!structured || !["single", "multiple", "unknown"].includes(structured.questionType) || typeof structured.stem !== "string" || !Array.isArray(structured.options) || structured.options.length < 2 || typeof structured.context !== "string" || typeof structured.visualDependency !== "boolean" || typeof structured.visualDependencyReason !== "string" || typeof structured.ignoredText !== "string" || !structured.ignoredText.trim() || /正确答案|解析|得分/.test(`${structured.stem}\n${structured.context}\n${JSON.stringify(structured.options)}`)) {
     fail("OpenAI-compatible text model did not return the required question structure and ignoredText ledger.");
   }
   console.log("OpenAI-compatible text model: structured-question JSON ok");
@@ -97,10 +98,12 @@ async function requestJev(apiKey, question) {
     }]))
     : { answer: { type: "choice", instructions: "选择最正确的一个答案。", criteria: Object.fromEntries(question.options.map((option) => [option.id, `${option.label}. ${option.text}`])) } };
   const response = await fetchWithTimeout(TYPESAFE_URL, { method: "POST", headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: "jev-latest", state: { task: question.questionType === "multiple" ? "多项选择题" : "单项选择题", stem: question.stem, options: Object.fromEntries(question.options.map((option) => [option.id, `${option.label}. ${option.text}`])) }, questions }) });
-  return readJsonResponse("TypeSafe", response);
+  return readJsonResponse("TypeSafe", response, apiKey);
 }
 
 async function requestLlm(baseUrl, model, apiKey, body, isVision = false) {
+  const invalidBaseUrl = validateBaseUrl(baseUrl);
+  if (invalidBaseUrl) return isVision ? { kind: "error", message: invalidBaseUrl } : fail(invalidBaseUrl);
   const normalized = baseUrl.trim().replace(/\/+$/, "");
   const url = /\/chat\/completions$/i.test(normalized) ? normalized : `${normalized}/chat/completions`;
   const send = (requestBody) => fetchWithTimeout(url, { method: "POST", headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ model, ...requestBody }) });
@@ -121,10 +124,10 @@ async function requestLlm(baseUrl, model, apiKey, body, isVision = false) {
       return fail(`OpenAI-compatible text request failed with HTTP ${response.status}.`);
     }
   }
-  if (response.ok) return isVision ? { kind: "supported" } : readJsonResponse("OpenAI-compatible model", response);
+  if (response.ok) return isVision ? { kind: "supported" } : readJsonResponse("OpenAI-compatible model", response, apiKey);
   const message = await response.text().catch(() => "");
   if (isVision && [400, 415, 422].includes(response.status) && (/image|vision|multimodal|image_url|only.*text|unsupported/i.test(message) || response.status === 415)) return { kind: "unsupported" };
-  return isVision ? { kind: "error", message: `HTTP ${response.status}${message ? `: ${message.slice(0, 160)}` : ""}` } : fail(`OpenAI-compatible text request failed with HTTP ${response.status}.`);
+  return isVision ? { kind: "error", message: `HTTP ${response.status}${message ? `: ${safeDetail(message, apiKey)}` : ""}` } : fail(`OpenAI-compatible text request failed with HTTP ${response.status}${message ? `: ${safeDetail(message, apiKey)}` : ""}.`);
 }
 
 async function fetchWithTimeout(url, init) {
@@ -134,10 +137,10 @@ async function fetchWithTimeout(url, init) {
   finally { clearTimeout(timer); }
 }
 
-async function readJsonResponse(name, response) {
+async function readJsonResponse(name, response, apiKey = "") {
   if (!response.ok) {
     const message = await response.text().catch(() => "");
-    fail(`${name} request failed with HTTP ${response.status}${message ? `: ${message.slice(0, 160)}` : ""}.`);
+    fail(`${name} request failed with HTTP ${response.status}${message ? `: ${safeDetail(message, apiKey)}` : ""}.`);
   }
   try { return await response.json(); }
   catch { fail(`${name} response was not valid JSON.`); }
@@ -157,4 +160,16 @@ function parseJsonObject(value) {
   catch { return undefined; }
 }
 function numberValue(value) { const number = Number(value); return Number.isFinite(number) ? Math.max(0, Math.min(1, number)) : undefined; }
+function validateBaseUrl(baseUrl) {
+  let url;
+  try { url = new URL(String(baseUrl).trim()); }
+  catch { return "OpenAI-compatible Base URL is not a valid URL."; }
+  if (url.username || url.password || url.search || url.hash) return "OpenAI-compatible Base URL must not contain credentials, query parameters, or a fragment.";
+  if (url.protocol === "https:") return undefined;
+  if (url.protocol === "http:" && new Set(["localhost", "127.0.0.1", "[::1]"]).has(url.hostname.toLowerCase())) return undefined;
+  return "OpenAI-compatible Base URL must use HTTPS; HTTP is allowed only for localhost, 127.0.0.1, or [::1].";
+}
+function safeDetail(value, apiKey) {
+  return String(value).replaceAll(apiKey, "[redacted]").replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]").replace(/[\r\n]+/g, " ").slice(0, 160);
+}
 function fail(message) { console.error(message); process.exit(1); }

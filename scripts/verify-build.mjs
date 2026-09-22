@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 
-const manifest = JSON.parse(await readFile(new URL("../dist/manifest.json", import.meta.url), "utf8"));
+const manifestText = await readFile(new URL("../dist/manifest.json", import.meta.url), "utf8");
+if ((manifestText.match(/"minimum_chrome_version"\s*:/g) ?? []).length !== 1) throw new Error("dist manifest must declare minimum_chrome_version exactly once");
+const manifest = JSON.parse(manifestText);
 if (manifest.manifest_version !== 3) throw new Error("dist manifest is not MV3");
 if (manifest.minimum_chrome_version !== "109") throw new Error("dist manifest minimum Chrome version is out of date");
 if (manifest.default_locale !== "zh_CN" || manifest.name !== "__MSG_extName__" || manifest.description !== "__MSG_extDescription__") throw new Error("dist manifest localization is out of date");

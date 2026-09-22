@@ -13,6 +13,11 @@ describe("question parsing", () => {
     expect(q.stem).toBe("哪个数字是偶数？");
     expect(q.options.map((x) => x.text)).toEqual(["3", "4"]);
   });
+  it("splits checkbox and radio glyph options from OCR text", () => {
+    const q = parseQuestionText("请选择所有偶数（多选）\n☐ A. 2\n☑ B. 3\n○ C. 4");
+    expect(q.options.map((x) => [x.label, x.text])).toEqual([["A", "2"], ["B", "3"], ["C", "4"]]);
+    expect(q.questionType).toBe("multiple");
+  });
   it("flags diagrams", () => expect(parseQuestionText("如图所示\nA. 1\nB. 2").warnings).toContain("POSSIBLE_DIAGRAM"));
   it("flags geometry and chemistry visual cues", () => {
     expect(parseQuestionText("几何图中阴影面积是多少？\nA. 1\nB. 2").warnings).toContain("POSSIBLE_DIAGRAM");

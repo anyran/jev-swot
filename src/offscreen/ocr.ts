@@ -1,5 +1,5 @@
 import * as ort from "onnxruntime-web/webgpu";
-import { inferVisualWarnings } from "../core/question";
+import { inferVisualWarnings, parseOptionLine } from "../core/question";
 import type { DOMRectLike, RecognitionWarning } from "../shared/types";
 
 interface Point { x: number; y: number }
@@ -115,7 +115,7 @@ export class PaddleOcr {
     const averageConfidence = results.length ? results.reduce((sum, x) => sum + x.confidence, 0) / results.length : 0;
     const lowConfidenceRatio = results.length ? results.reduce((sum, x) => sum + (x.lowConfidenceRatio ?? 1), 0) / results.length : 1;
     const textArea = results.reduce((sum, x) => sum + x.width * x.height, 0) / Math.max(1, crop.width * crop.height);
-    const lines=text.split("\n"),firstOption=lines.findIndex(line=>/^\s*(?:[A-H]|[1-9]\d{0,2}|[①-⑨])[.、)）:]/i.test(line)),optionCount=lines.filter(line=>/^\s*(?:[A-H]|[1-9]\d{0,2}|[①-⑨])[.、)）:]/i.test(line)).length;
+    const lines=text.split("\n"),parsedOptions=lines.map((line)=>parseOptionLine(line,0)),firstOption=parsedOptions.findIndex(Boolean),optionCount=parsedOptions.filter(Boolean).length;
     const structureScore=(firstOption>0?0.05:0)+Math.min(0.1,optionCount*0.05),areaScore=textArea>=0.01?0.05:Math.min(0.05,textArea*5);
     const confidence=Math.max(0,Math.min(1,averageConfidence*0.7+(1-lowConfidenceRatio)*0.1+structureScore+areaScore));
     const warnings = inferVisualWarnings(text, textArea);
@@ -127,7 +127,7 @@ export class PaddleOcr {
 }
 
 function qualityScore(result: OcrResult): number {
-  const completeness = /(?:^|\n)\s*(?:[A-H]|[1-9]\d{0,2}|[①-⑨])[.、)）:]/m.test(result.text) ? 0.08 : 0;
+  const completeness = result.text.split(/\n+/).some((line) => parseOptionLine(line, 0)) ? 0.08 : 0;
   return result.confidence + Math.min(0.08, result.boxes.length * 0.005) + completeness;
 }
 function enhanceGrayscale(image: ImageData): ImageData {

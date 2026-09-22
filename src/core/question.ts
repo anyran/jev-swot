@@ -1,6 +1,7 @@
 import type { ExtractedQuestion, QuestionOption, RecognitionWarning } from "../shared/types";
 
 const OPTION_RE = /^\s*(?:(?:([A-Ha-h])(?:[.、)）:]|\s+))|(?:([1-9]\d{0,2})[.、)）:])|(?:([①②③④⑤⑥⑦⑧⑨])[.、)）:]))\s*(.+)$/;
+const MARKED_OPTION_RE = /^\s*(?:\[\s*[xX✓✔]?\s*\]|[☐☑□■○●◯◉◒✓✔])\s*(?:(?:([A-Ha-h])(?:[.、)）:]|\s+))|(?:([1-9]\d{0,2})[.、)）:])|(?:([①②③④⑤⑥⑦⑧⑨])[.、)）:]))?\s*(.+)$/u;
 const FORMULA_RE = /[∑√∫≈≠≤≥±×÷∞∂∇∈∉∝→←↔^]|[⁰¹²³⁴⁵⁶⁷⁸⁹₀₁₂₃₄₅₆₇₈₉]|\b(?:sin|cos|tan|log|ln|lim)\b|\$[^$]+\$/i;
 const DIAGRAM_RE = /(?:如图|下图|图中|曲线|折线|柱状|散点|阴影|面积|图表|统计图|几何|化学(?:结构|式)|结构式|分子|坐标(?:系|轴)?|示意图|diagram|graph|figure|chart|plot|axis|geometry|chemical\s+structure|molecule)/i;
 const MULTIPLE_RE = /(?:多选|可多选|选择所有|所有正确|select all|multiple choice)/i;
@@ -10,15 +11,28 @@ const RESULT_ANNOTATION_RE = /(?:(?:正确答案|参考答案|答案解析|解�
 export function stableOptionId(index: number): string { return `option_${index + 1}`; }
 export function fallbackOptionLabel(index: number): string { return index < 26 ? String.fromCharCode(65 + index) : String(index + 1); }
 
+/**
+ * Parse one OCR/DOM line that may carry a conventional label or a checkbox /
+ * radio glyph.  A glyph without an explicit label receives the next stable
+ * fallback label so the caller can still present it for human confirmation.
+ */
+export function parseOptionLine(line: string, index: number): { label: string; text: string } | undefined {
+  const match = OPTION_RE.exec(line);
+  const markedMatch = match ? undefined : MARKED_OPTION_RE.exec(line);
+  if (match) return { label: match[1]?.toUpperCase() || match[2] || match[3]!, text: match[4] };
+  if (markedMatch) return { label: markedMatch[1]?.toUpperCase() || markedMatch[2] || markedMatch[3] || fallbackOptionLabel(index), text: markedMatch[4] };
+  return undefined;
+}
+
 export function parseQuestionText(text: string, rect = { x: 0, y: 0, width: 0, height: 0 }): ExtractedQuestion {
   const lines = text.split(/\n+/).map((x) => x.trim()).filter(Boolean);
   const options: QuestionOption[] = [];
   let firstOption = lines.length;
   lines.forEach((line, index) => {
-    const match = OPTION_RE.exec(line);
-    if (!match) return;
+    const parsed = parseOptionLine(line, options.length);
+    if (!parsed) return;
     firstOption = Math.min(firstOption, index);
-    options.push({ id: stableOptionId(options.length), label: match[1]?.toUpperCase() || match[2] || match[3], text: match[4] });
+    options.push({ id: stableOptionId(options.length), label: parsed.label, text: parsed.text });
   });
   const hasAlphabeticLabel = options.some((option) => /^[A-H]$/i.test(option.label));
   if (hasAlphabeticLabel) options.forEach((option, index) => {
