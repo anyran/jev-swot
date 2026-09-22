@@ -16,7 +16,7 @@ async function getSettings(): Promise<PersistentSettings> {
   const raw = stored.settings && typeof stored.settings === "object" ? stored.settings as Record<string, unknown> : {};
   const llm = raw.llm && typeof raw.llm === "object" ? raw.llm as Record<string, unknown> : {};
   const capability = (value: unknown, fallback: "auto" | "supported" | "unsupported") => value === "auto" || value === "supported" || value === "unsupported" ? value : fallback;
-  const disabledHosts = Array.isArray(raw.disabledHosts) ? raw.disabledHosts.map((host) => typeof host === "string" ? host.trim().toLowerCase().replace(/^\.+|\.+$/g, "") : "").filter(Boolean) : [];
+  const disabledHosts = Array.isArray(raw.disabledHosts) ? [...new Set(raw.disabledHosts.map((host) => typeof host === "string" ? host.trim().toLowerCase().replace(/^\.+|\.+$/g, "") : "").filter(Boolean))] : [];
   const threshold = Number(raw.ocrThreshold);
   return {
     llm: {

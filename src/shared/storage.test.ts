@@ -12,7 +12,7 @@ describe("storage normalization", () => {
   });
 
   it("repairs malformed settings without changing safe defaults", () => {
-    const settings = normalizeSettings({ llm: { baseUrl: "  ", vision: "invalid" }, ocrThreshold: 10, useWebGpu: "yes", confirmVisionUpload: false, disabledHosts: [" Example.COM ", 7, "..."] });
+    const settings = normalizeSettings({ llm: { baseUrl: "  ", vision: "invalid" }, ocrThreshold: 10, useWebGpu: "yes", confirmVisionUpload: false, disabledHosts: [" Example.COM ", "example.com", 7, "..."] });
     expect(settings.llm.baseUrl).toBe("https://api.openai.com/v1");
     expect(settings.llm.vision).toBe("auto");
     expect(settings.ocrThreshold).toBe(0.95);

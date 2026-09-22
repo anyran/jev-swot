@@ -9,6 +9,8 @@ const content = await readFile(contentPath, "utf8");
 if (/^\s*(?:import|export)(?:\s|[({"])/m.test(content)) throw new Error("Chrome content script contains ESM import/export and cannot execute as a classic manifest script");
 for (const size of [16, 32, 48, 128]) await readFile(new URL(`../dist/icons/icon-${size}.png`, import.meta.url));
 for (const document of ["LICENSE", "THIRD_PARTY_NOTICES.md", "PRIVACY.md"]) await readFile(new URL(`../dist/${document}`, import.meta.url));
+const privacyPage = await readFile(new URL("../docs/privacy.html", import.meta.url), "utf8");
+if (!privacyPage.includes("普通模型答题") || !privacyPage.includes("不上传截图")) throw new Error("public privacy page is missing the direct-answer data-flow disclosure");
 for (const model of ["ppocrv5-mobile-det.onnx", "ppocrv5-mobile-rec.onnx", "ppocrv5-dict.txt", "model-manifest.json"]) await readFile(new URL(`../dist/models/${model}`, import.meta.url));
 const modelManifest = JSON.parse(await readFile(new URL("../dist/models/model-manifest.json", import.meta.url), "utf8"));
 for (const [filename, metadata] of Object.entries(modelManifest.files ?? {})) {

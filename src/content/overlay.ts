@@ -80,7 +80,7 @@ export class ResultOverlay {
   private warnings() { return this.question?.warnings.length ? `<div class="warning">${this.question.warnings.map(warningText).join("；")}</div>` : ""; }
   private editor() {
     const q = this.question; if (!q) return "";
-    return `<div class="editor">${this.previewHtml()}<label>题型<select id="type"><option value="single" ${q.questionType === "single" ? "selected" : ""}>单选</option><option value="multiple" ${q.questionType === "multiple" ? "selected" : ""}>多选</option></select></label><label>题干<textarea id="stem">${escapeHtml(q.stem)}</textarea></label><label>选项（每行一个）<textarea id="options">${escapeHtml(q.options.map((x) => `${x.label}. ${x.text}`).join("\n"))}</textarea></label><label>补充上下文/图形描述（可选）<textarea id="context">${escapeHtml(q.context ?? "")}</textarea></label><button class="primary" data-action="retry">重新判断</button></div>`;
+    return `<div class="editor">${this.previewHtml()}<label>题型<select id="type"><option value="unknown" ${q.questionType === "unknown" ? "selected" : ""}>请选择题型</option><option value="single" ${q.questionType === "single" ? "selected" : ""}>单选</option><option value="multiple" ${q.questionType === "multiple" ? "selected" : ""}>多选</option></select></label><label>题干<textarea id="stem">${escapeHtml(q.stem)}</textarea></label><label>选项（每行一个）<textarea id="options">${escapeHtml(q.options.map((x) => `${x.label}. ${x.text}`).join("\n"))}</textarea></label><label>补充上下文/图形描述（可选）<textarea id="context">${escapeHtml(q.context ?? "")}</textarea></label><button class="primary" data-action="retry">重新判断</button></div>`;
   }
   private previewHtml() {
     const p = this.preview; if (!p) return "";
@@ -136,7 +136,7 @@ export class ResultOverlay {
     const lines = (this.root.querySelector("#options") as HTMLTextAreaElement).value.split("\n").map((x) => x.trim()).filter(Boolean);
     const options = lines.map((line, i) => { const m = /^([A-Ha-h]|[1-9]\d{0,2}|[①-⑨])[.、)）:]?\s*(.*)$/.exec(line); return { id: `option_${i + 1}`, label: m?.[1]?.toUpperCase() ?? fallbackOptionLabel(i), text: m?.[2] || line }; });
     const context = (this.root.querySelector("#context") as HTMLTextAreaElement).value.trim();
-    const q: ExtractedQuestion = { ...this.question, source: "user-edited", stem, options, context, questionType: (this.root.querySelector("#type") as HTMLSelectElement).value as "single" | "multiple", recognitionConfidence: 1, warnings: [] };
+    const q: ExtractedQuestion = { ...this.question, source: "user-edited", stem, options, context, questionType: (this.root.querySelector("#type") as HTMLSelectElement).value as ExtractedQuestion["questionType"], recognitionConfidence: 1, warnings: [] };
     this.retry(q);
   }
 }

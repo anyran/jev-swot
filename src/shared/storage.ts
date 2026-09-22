@@ -11,7 +11,7 @@ function capability(value: unknown, fallback: "auto" | "supported" | "unsupporte
 export function normalizeSettings(value: unknown): PersistentSettings {
   const raw = record(value), llm = record(raw.llm), threshold = Number(raw.ocrThreshold);
   const disabledHosts = Array.isArray(raw.disabledHosts)
-    ? raw.disabledHosts.map((host) => typeof host === "string" ? host.trim().toLowerCase().replace(/^\.+|\.+$/g, "") : "").filter(Boolean)
+    ? [...new Set(raw.disabledHosts.map((host) => typeof host === "string" ? host.trim().toLowerCase().replace(/^\.+|\.+$/g, "") : "").filter(Boolean))]
     : [...DEFAULT_SETTINGS.disabledHosts];
   return {
     llm: {

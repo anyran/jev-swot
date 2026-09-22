@@ -3,7 +3,10 @@ import type { DirectAnswerResult, ExtractedQuestion, LLMSettings, OcrTextBox, Pr
 export class LlmError extends Error {
   constructor(message: string, public status?: number, public unsupportedVision = false, public retryable = false) { super(message); }
 }
-function endpoint(baseUrl: string): string { return `${baseUrl.replace(/\/$/, "")}/chat/completions`; }
+function endpoint(baseUrl: string): string {
+  const normalized = baseUrl.trim().replace(/\/+$/, "");
+  return /\/chat\/completions$/i.test(normalized) ? normalized : `${normalized}/chat/completions`;
+}
 function questionSchema() {
   return {
     name: "question",

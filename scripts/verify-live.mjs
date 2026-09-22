@@ -95,7 +95,8 @@ async function requestJev(apiKey, question) {
 }
 
 async function requestLlm(baseUrl, model, apiKey, body, isVision = false) {
-  const url = `${baseUrl.replace(/\/$/, "")}/chat/completions`;
+  const normalized = baseUrl.trim().replace(/\/+$/, "");
+  const url = /\/chat\/completions$/i.test(normalized) ? normalized : `${normalized}/chat/completions`;
   const send = (requestBody) => fetchWithTimeout(url, { method: "POST", headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ model, ...requestBody }) });
   let response;
   try {
