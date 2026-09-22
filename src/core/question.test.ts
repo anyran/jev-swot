@@ -64,4 +64,8 @@ describe("question parsing", () => {
   it("keeps an option prefix when a result marker shares its OCR line", () => {
     expect(stripExcludedText("B. 4 正确答案：B", "正确答案：B")).toBe("B. 4");
   });
+  it("handles English result markers without deleting the option prefix", () => {
+    expect(stripExcludedText("B. 4 Correct answer: B", "Correct answer: B")).toBe("B. 4");
+    expect(stripExcludedText("Explanation: even numbers are divisible by two", "Explanation: even numbers are divisible by two")).toBe("");
+  });
 });
