@@ -135,7 +135,7 @@ async function recognizeFallback(base: ExtractedQuestion, screenshot: string, de
   const questionImage = cropped.imageDataUrl as string;
   const capabilities = currentCapabilities(settings.llm, secrets);
   const llm = effectiveLlm(settings.llm, capabilities);
-  let visionFallbackWarning: "VISION_SERVICE_UNAVAILABLE" | undefined;
+  let visionFallbackWarning: "VISION_MODEL_UNSUPPORTED" | "VISION_SERVICE_UNAVAILABLE" | undefined;
   if (allowVision && secrets.llmApiKey && settings.llm.vision !== "unsupported" && (settings.llm.vision === "supported" || capabilities.visionDetected !== "unsupported")) {
     progress("vision", "正在调用视觉模型识别题目…");
     try {
@@ -157,7 +157,10 @@ async function recognizeFallback(base: ExtractedQuestion, screenshot: string, de
       return { question: visionQuestion, preview: { imageDataUrl: questionImage, width: cropped.width, height: cropped.height, boxes: [], excludedText: parsed.ignoredText?.trim() || undefined } };
     } catch (error) {
       if (signal.aborted) throw error;
-      if ((error as Error & { unsupportedVision?: boolean }).unsupportedVision) await cacheCapabilities(settings.llm, secrets, "unsupported");
+      if ((error as Error & { unsupportedVision?: boolean }).unsupportedVision) {
+        await cacheCapabilities(settings.llm, secrets, "unsupported");
+        visionFallbackWarning = "VISION_MODEL_UNSUPPORTED";
+      }
       else visionFallbackWarning = "VISION_SERVICE_UNAVAILABLE";
     }
   }
@@ -254,7 +257,7 @@ function hasStructuredQuestionFields(parsed: import("../core/llm").StructuredQue
     && typeof parsed.ignoredText === "string";
 }
 function isRecognitionWarning(value: unknown): value is ExtractedQuestion["warnings"][number] {
-  return value === "LOW_OCR_CONFIDENCE" || value === "POSSIBLE_FORMULA" || value === "POSSIBLE_DIAGRAM" || value === "INCOMPLETE_OPTIONS" || value === "VISION_MODEL_REQUIRED" || value === "VISION_SERVICE_UNAVAILABLE" || value === "DOM_OCR_CONFLICT" || value === "STRUCTURE_REVIEW_REQUIRED";
+  return value === "LOW_OCR_CONFIDENCE" || value === "POSSIBLE_FORMULA" || value === "POSSIBLE_DIAGRAM" || value === "INCOMPLETE_OPTIONS" || value === "VISION_MODEL_REQUIRED" || value === "VISION_MODEL_UNSUPPORTED" || value === "VISION_SERVICE_UNAVAILABLE" || value === "DOM_OCR_CONFLICT" || value === "STRUCTURE_REVIEW_REQUIRED";
 }
 async function capture(windowId?: number): Promise<string> {
   return windowId == null ? chrome.tabs.captureVisibleTab({ format: "png" }) : chrome.tabs.captureVisibleTab(windowId, { format: "png" });

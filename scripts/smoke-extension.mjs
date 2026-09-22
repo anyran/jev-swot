@@ -138,6 +138,7 @@ try {
     return chrome.runtime.sendMessage({ type: "ANALYZE", requestId: crypto.randomUUID(), question: { source: "dom", questionType: "unknown", stem: "", options: [], sourceRect: { x: 0, y: 0, width: canvas.width, height: canvas.height }, recognitionConfidence: 0.2, warnings: ["INCOMPLETE_OPTIONS"] }, screenshot: canvas.toDataURL("image/png"), devicePixelRatio: 1, visionConsent: "allow", captureAuthorized: true });
   });
   if (!visionFallback?.ok || !visionFallback.probability) throw new Error(`Vision 400 fallback smoke returned an invalid response: ${JSON.stringify(visionFallback)}`);
+  if (!visionFallback.question?.warnings?.includes("VISION_MODEL_UNSUPPORTED")) throw new Error(`Vision capability fallback did not expose the unsupported-model warning: ${JSON.stringify(visionFallback.question?.warnings)}`);
   if (visionRequests !== visionRequestsBeforeFallback + 1) throw new Error(`Vision capability fallback was not exercised exactly once (vision=${visionRequests})`);
   const explanation = await page.evaluate(() => new Promise((resolve, reject) => {
     const port = chrome.runtime.connect({ name: "jev-swot-explanation" }); let text = "";
