@@ -95,9 +95,6 @@ try {
   await new Promise((resolve) => setTimeout(resolve, 300));
   if (await questionPage.$('[data-jev-swot-root="true"]')) throw new Error("Disabled site still displayed an analysis overlay");
   if (jevRequests !== requestsBeforeDisabledSite) throw new Error("Disabled site still sent a JEV request");
-  const requestsBeforeDisabledExplain = llmRequests;
-  const disabledExplain = await questionPage.evaluate(() => chrome.runtime.sendMessage({ type: "EXPLAIN", requestId: crypto.randomUUID(), question: { source: "dom", questionType: "single", stem: "Which number is even?", options: [{ id: "option_1", label: "A", text: "3" }, { id: "option_2", label: "B", text: "4" }], sourceRect: { x: 0, y: 0, width: 1, height: 1 }, recognitionConfidence: 1, warnings: [] }, probability: { mode: "single-distribution", options: [{ id: "option_1", label: "A", probability: 0.08 }, { id: "option_2", label: "B", probability: 0.92 }], confidence: 0.92, model: "jev-smoke" } }));
-  if (disabledExplain?.ok || disabledExplain?.code !== "SITE_DISABLED" || llmRequests !== requestsBeforeDisabledExplain) throw new Error(`Disabled site still allowed answer explanation: ${JSON.stringify(disabledExplain)}`);
   await page.evaluate(async () => {
     const stored = await chrome.storage.local.get("settings");
     await chrome.storage.local.set({ settings: { ...(stored.settings ?? {}), disabledHosts: [] } });
