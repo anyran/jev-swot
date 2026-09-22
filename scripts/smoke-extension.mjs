@@ -27,7 +27,7 @@ try {
   const workerSession = await target.createCDPSession(); let jevRequests = 0, llmRequests = 0, visionRequests = 0, directAnswerRequests = 0, forceVisionUnsupported = false, forceVisionMissingContext = false, forceStructuredMissingIgnored = false, jevInputWasClean = false, multipleJevTargetsExplicit = false;
   await workerSession.send("Fetch.enable", { patterns: [{ urlPattern: "https://api.typesafe.ai/*", requestStage: "Request" }, { urlPattern: "https://api.openai.com/*", requestStage: "Request" }] });
   workerSession.on("Fetch.requestPaused", (event) => {
-    if (event.request.url.startsWith("https://api.typesafe.ai/")) {
+    if (event.request.url.startsWith("https://api.typesafe.ai/") && event.request.url.endsWith("/v1/systemone")) {
       jevRequests++;
       const requestBody = event.request.postData ?? "";
       if (requestBody.includes("Correct answer:") || requestBody.includes("Explanation:")) jevInputWasClean = false;
@@ -50,7 +50,7 @@ try {
       });
       return;
     }
-    if (event.request.url.startsWith("https://api.openai.com/")) {
+    if (event.request.url.startsWith("https://api.openai.com/") || event.request.url.startsWith("https://api.typesafe.ai/")) {
       llmRequests++;
       const isVisionRequest = event.request.postData?.includes("image_url") === true;
       if (isVisionRequest) visionRequests++;
@@ -87,10 +87,23 @@ try {
     ]);
   }, secrets);
   await setSmokeSecrets({ typeSafeApiKey: "smoke-only", llmApiKey: "smoke-llm" });
-  await page.evaluate(() => chrome.storage.local.set({ settings: { llm: { baseUrl: "https://api.openai.com/v1", model: "smoke-model", vision: "unsupported", structuredOutput: "unsupported" }, ocrThreshold: 0.5, useWebGpu: false, confirmVisionUpload: true, disabledHosts: [] } }));
+  await page.evaluate(() => chrome.storage.local.set({ settings: { llm: { baseUrl: "https://api.typesafe.ai/v1", model: "smoke-model", vision: "unsupported", structuredOutput: "unsupported" }, ocrThreshold: 0.5, useWebGpu: false, confirmVisionUpload: true, disabledHosts: [] } }));
   await page.reload({ waitUntil: "domcontentloaded" });
   const persisted = await page.evaluate(() => chrome.storage.local.get(["settings", "savedSecrets"]));
   if (persisted.settings?.llm?.model !== "smoke-model" || persisted.savedSecrets?.typeSafeApiKey !== "smoke-only" || persisted.savedSecrets?.llmApiKey !== "smoke-llm") throw new Error(`Local configuration did not survive an options-page restart: ${JSON.stringify(persisted)}`);
+  let pageAccessGranted = await page.evaluate(() => chrome.permissions.contains({ origins: ["http://*/*", "https://*/*"] }));
+  if (!pageAccessGranted) {
+    if (!await page.$('[data-action="enable-page-access"]')) throw new Error("Optional page-access button is missing before permission request");
+    await page.click('[data-action="enable-page-access"]');
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    pageAccessGranted = await page.evaluate(() => chrome.permissions.contains({ origins: ["http://*/*", "https://*/*"] }));
+  }
+  if (pageAccessGranted) {
+    await page.waitForFunction(async () => (await chrome.scripting.getRegisteredContentScripts({ ids: ["jev-swot-content"] })).length > 0, { timeout: 5_000 });
+    console.log("Smoke: optional page access granted and persistent content script registered");
+  } else {
+    console.log("Smoke: optional page access was not granted by headless Chrome; page gesture checks remain in the manual release checklist");
+  }
   console.log("Smoke: options page ready; running packaged OCR");
   const ocr = await page.evaluate(async () => {
     if (!await chrome.offscreen.hasDocument()) await chrome.offscreen.createDocument({ url: "offscreen.html", reasons: [chrome.offscreen.Reason.BLOBS], justification: "Release smoke test for packaged local OCR" });
@@ -102,31 +115,33 @@ try {
   if (!ocr?.ok || typeof ocr.text !== "string" || ocr.text.trim().length < 3) throw new Error(`Packaged OCR smoke test failed: ${JSON.stringify(ocr)}`);
   const ocrText = ocr.text.toLowerCase();
   if (!ocrText.includes("even") || !ocrText.includes("3") || !ocrText.includes("4")) throw new Error(`Packaged OCR did not recover the expected test question text: ${JSON.stringify({ text: ocr.text, confidence: ocr.confidence, backend: ocr.backend })}`);
-  console.log("Smoke: OCR ready; testing page interaction");
-  server = createServer((_request, response) => { response.setHeader("content-type", "text/html; charset=utf-8"); response.end(`<!doctype html><html><body><main><section id="question"><h2>2 + 2 等于多少？</h2><label id="choice-a"><input type="radio" name="answer">A. 3</label><label><input type="radio" name="answer">B. 4</label></section><section id="other"><h2>1 + 1 等于多少？</h2><label><input type="radio" name="other-answer">A. 1</label><label><input type="radio" name="other-answer">B. 2</label></section></main></body></html>`); });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const address = server.address(); if (!address || typeof address === "string") throw new Error("Failed to start smoke page");
-  const questionPage = await browser.newPage(); await questionPage.goto(`http://127.0.0.1:${address.port}/`, { waitUntil: "networkidle0" });
-  await page.evaluate(async () => {
-    const stored = await chrome.storage.local.get("settings");
-    await chrome.storage.local.set({ settings: { ...(stored.settings ?? {}), disabledHosts: ["127.0.0.1"] } });
-  });
-  await questionPage.reload({ waitUntil: "networkidle0" });
-  const requestsBeforeDisabledSite = jevRequests;
-  await questionPage.$eval("#choice-a", (element) => element.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, altKey: true })));
-  await new Promise((resolve) => setTimeout(resolve, 300));
-  if (await questionPage.$('[data-jev-swot-root="true"]')) throw new Error("Disabled site still displayed an analysis overlay");
-  if (jevRequests !== requestsBeforeDisabledSite) throw new Error("Disabled site still sent a JEV request");
-  await page.evaluate(async () => {
-    const stored = await chrome.storage.local.get("settings");
-    await chrome.storage.local.set({ settings: { ...(stored.settings ?? {}), disabledHosts: [] } });
-  });
-  await questionPage.reload({ waitUntil: "networkidle0" });
-  await questionPage.$eval("#choice-a", (element) => element.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, altKey: true })));
-  await questionPage.waitForSelector('[data-jev-swot-root="true"]', { timeout: 5_000 });
-  await new Promise((resolve, reject) => { const deadline = Date.now() + 5_000; const poll = () => jevRequests ? resolve() : Date.now() > deadline ? reject(new Error("Mock JEV request was not observed")) : setTimeout(poll, 50); poll(); });
-  const answerChanged = await questionPage.$eval('input[type="radio"]', (input) => input.checked);
-  if (answerChanged) throw new Error("Extension modified the page answer during smoke test");
+  if (pageAccessGranted) {
+    console.log("Smoke: OCR ready; testing page interaction");
+    server = createServer((_request, response) => { response.setHeader("content-type", "text/html; charset=utf-8"); response.end(`<!doctype html><html><body><main><section id="question"><h2>2 + 2 等于多少？</h2><label id="choice-a"><input type="radio" name="answer">A. 3</label><label><input type="radio" name="answer">B. 4</label></section><section id="other"><h2>1 + 1 等于多少？</h2><label><input type="radio" name="other-answer">A. 1</label><label><input type="radio" name="other-answer">B. 2</label></section></main></body></html>`); });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address(); if (!address || typeof address === "string") throw new Error("Failed to start smoke page");
+    const questionPage = await browser.newPage(); await questionPage.goto(`http://127.0.0.1:${address.port}/`, { waitUntil: "networkidle0" });
+    await page.evaluate(async () => {
+      const stored = await chrome.storage.local.get("settings");
+      await chrome.storage.local.set({ settings: { ...(stored.settings ?? {}), disabledHosts: ["127.0.0.1"] } });
+    });
+    await questionPage.reload({ waitUntil: "networkidle0" });
+    const requestsBeforeDisabledSite = jevRequests;
+    await questionPage.$eval("#choice-a", (element) => element.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, altKey: true })));
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    if (await questionPage.$('[data-jev-swot-root="true"]')) throw new Error("Disabled site still displayed an analysis overlay");
+    if (jevRequests !== requestsBeforeDisabledSite) throw new Error("Disabled site still sent a JEV request");
+    await page.evaluate(async () => {
+      const stored = await chrome.storage.local.get("settings");
+      await chrome.storage.local.set({ settings: { ...(stored.settings ?? {}), disabledHosts: [] } });
+    });
+    await questionPage.reload({ waitUntil: "networkidle0" });
+    await questionPage.$eval("#choice-a", (element) => element.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, altKey: true })));
+    await questionPage.waitForSelector('[data-jev-swot-root="true"]', { timeout: 5_000 });
+    await new Promise((resolve, reject) => { const deadline = Date.now() + 5_000; const poll = () => jevRequests ? resolve() : Date.now() > deadline ? reject(new Error("Mock JEV request was not observed")) : setTimeout(poll, 50); poll(); });
+    const answerChanged = await questionPage.$eval('input[type="radio"]', (input) => input.checked);
+    if (answerChanged) throw new Error("Extension modified the page answer during smoke test");
+  }
   const directAnswer = await page.evaluate(async () => {
     await Promise.all([chrome.storage.session.set({ secrets: { llmApiKey: "smoke-llm" } }), chrome.storage.local.set({ savedSecrets: { llmApiKey: "smoke-llm" } })]);
     const question = { source: "dom", questionType: "single", stem: "Which number is even?", options: [{ id: "option_1", label: "A", text: "3" }, { id: "option_2", label: "B", text: "4" }], sourceRect: { x: 0, y: 0, width: 1, height: 1 }, recognitionConfidence: 1, warnings: [] };
@@ -140,6 +155,7 @@ try {
   const screenshotWithoutGesture = await page.evaluate(() => chrome.runtime.sendMessage({ type: "ANALYZE", requestId: crypto.randomUUID(), question: { source: "dom", questionType: "unknown", stem: "", options: [], sourceRect: { x: 0, y: 0, width: 320, height: 120 }, recognitionConfidence: 0.2, warnings: ["INCOMPLETE_OPTIONS"] }, captureAuthorized: false }));
   if (screenshotWithoutGesture?.code !== "CAPTURE_REQUIRES_SHORTCUT") throw new Error(`Screenshot fallback bypassed the explicit gesture gate: ${JSON.stringify(screenshotWithoutGesture)}`);
   await setSmokeSecrets({ typeSafeApiKey: "smoke-only", llmApiKey: "smoke-llm" });
+  const jevRequestsBeforeFallback = jevRequests;
   const fallback = await page.evaluate(async () => {
     const canvas = document.createElement("canvas"); canvas.width = 900; canvas.height = 340;
     const context = canvas.getContext("2d"); context.fillStyle = "white"; context.fillRect(0, 0, canvas.width, canvas.height); context.fillStyle = "black"; context.font = "42px Arial";
@@ -149,7 +165,7 @@ try {
   if (!fallback?.ok || !fallback.probability) throw new Error(`OCR fallback smoke returned an invalid response: ${JSON.stringify(fallback)}`);
   if (!fallback.question?.warnings?.includes("VISION_MODEL_UNSUPPORTED")) throw new Error(`Configured non-vision model did not expose the local OCR fallback warning: ${JSON.stringify(fallback.question?.warnings)}`);
   if (!jevInputWasClean) throw new Error("OCR structure model's excluded answer/explanation text reached the JEV request");
-  if (llmRequests === 0 || jevRequests < 2) throw new Error(`OCR fallback smoke request chain was not observed (llm=${llmRequests}, vision=${visionRequests}, jev=${jevRequests})`);
+  if (llmRequests === 0 || jevRequests <= jevRequestsBeforeFallback) throw new Error(`OCR fallback smoke request chain was not observed (llm=${llmRequests}, vision=${visionRequests}, jev=${jevRequests}, before=${jevRequestsBeforeFallback})`);
   if (visionRequests !== 0) throw new Error("Canvas OCR smoke unexpectedly uploaded an image to the vision model");
   await setSmokeSecrets({ typeSafeApiKey: "smoke-only" });
   const reviewRequired = await page.evaluate(async () => {
@@ -160,7 +176,7 @@ try {
   });
   if (reviewRequired?.ok || reviewRequired?.code !== "STRUCTURE_REVIEW_REQUIRED") throw new Error(`OCR without a text model bypassed structure review: ${JSON.stringify(reviewRequired)}`);
   await setSmokeSecrets({ typeSafeApiKey: "smoke-only", llmApiKey: "smoke-llm" });
-  await page.evaluate(() => chrome.storage.local.set({ settings: { llm: { baseUrl: "https://api.openai.com/v1", model: "smoke-model", vision: "auto", structuredOutput: "unsupported" }, ocrThreshold: 0.5, useWebGpu: false, confirmVisionUpload: true, disabledHosts: [] } }));
+  await page.evaluate(() => chrome.storage.local.set({ settings: { llm: { baseUrl: "https://api.typesafe.ai/v1", model: "smoke-model", vision: "auto", structuredOutput: "unsupported" }, ocrThreshold: 0.5, useWebGpu: false, confirmVisionUpload: true, disabledHosts: [] } }));
   const consent = await page.evaluate(async () => {
     const canvas = document.createElement("canvas"); canvas.width = 900; canvas.height = 340;
     const context = canvas.getContext("2d"); context.fillStyle = "white"; context.fillRect(0, 0, canvas.width, canvas.height); context.fillStyle = "black"; context.font = "42px Arial";

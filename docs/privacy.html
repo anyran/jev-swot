@@ -3,7 +3,7 @@
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Jev SWOT（Jev 做题家）隐私政策</title><style>body{max-width:760px;margin:48px auto;padding:0 24px;font:16px/1.75 system-ui;color:#172033}h1,h2{line-height:1.25}a{color:#2563eb}</style></head>
 <body>
 <h1>Jev SWOT（Jev 做题家）隐私政策</h1><p>最后更新：2026 年 9 月 22 日</p>
-<p>Jev SWOT（Jev 做题家）只在用户通过快捷键、扩展按钮或 Alt + 双击主动触发时处理当前题目，不出售数据、不投放广告，也不自动勾选或提交网页答案。</p>
+<p>Jev SWOT（Jev 做题家）只在用户通过快捷键、扩展按钮或 Alt + 双击主动触发时处理当前题目，不出售数据、不投放广告，也不自动勾选或提交网页答案。结果默认以低干扰的透明文字提示显示，详情通过图标按钮按需打开。</p>
 <h2>处理的数据</h2><ul><li>扩展优先在设备内读取当前题目容器的可见 DOM 文本。</li><li>HTTP/HTTPS 网页访问是可选权限。用户显式启用后，Alt + 双击可以在已打开网页中持续监听；未启用时，扩展按钮和框选快捷键仍通过用户主动触发的临时权限工作。</li><li>DOM 不完整时，用户需要使用框选快捷键授予当前页面临时截图权限，扩展再截取框选区域；Alt + 双击仅处理能够从 DOM 完整读取的题目，不会绕过该截图权限。本地 PP-OCRv5 在设备上处理截图且不上传。</li><li>只有用户配置并实际启用视觉模型时，题目截图才会发送至该用户配置的 API；默认每次上传前询问。</li><li>如果配置了普通文本模型，OCR 文字和文本框位置可能发送给该模型用于严格 JSON 结构化；模型会将题号、答案、解析、得分、对错标记和页面杂讯列为排除文本，这些排除片段不会进入 JEV，也不会发送原始截图。</li><li>未配置普通文本模型时，扩展只保留本地规则拆分，并要求用户先人工校正 OCR 题干和选项。</li><li>TypeSafe Jev 接收用户确认后的题干、上下文和选项，以返回选项概率。</li><li>用户在结果详情中主动点击“普通模型答题”时（或在 JEV 缺少密钥时从提示进入该路径），普通模型会收到已确认的题干、上下文和选项，并返回答案、教学解释、知识点和不确定性；该模式不上传截图。</li><li>只有用户点击“答案解析”后，结构化题目及 JEV 概率才会额外发送至用户配置的普通模型。</li></ul>
 <h2>存储与保留</h2><ul><li>模型地址、模型名、能力设置、TypeSafe API Key 和普通模型 API Key 保存在本机 <code>chrome.storage.local</code>，浏览器重启后仍会恢复，不会同步到云端。</li><li>OCR 阈值、WebGPU 开关、视觉上传确认和禁用站点列表也保存在 <code>chrome.storage.local</code>。</li><li>设置页的“清除本次会话”只清除当前会话缓存；“清除 API Key”会删除会话和本机保存的密钥。</li><li>扩展不持久保存网页正文、截图、OCR 内容、题目、答案或模型响应。</li></ul>
 <h2>第三方服务</h2><p>扩展会按用户操作调用 <a href="https://typesafe.ai/">TypeSafe API</a>，以及用户自行配置的 OpenAI 兼容 API。相应服务的数据处理受其各自政策约束。</p>

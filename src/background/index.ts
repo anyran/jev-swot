@@ -6,6 +6,8 @@ import { getSecrets, getSettings, setSecrets } from "../shared/storage";
 import type { ExtractedQuestion, RecognitionPreview, WorkerRequest, WorkerResponse } from "../shared/types";
 
 const activeRequests = new Map<string, AbortController>();
+const PAGE_ORIGINS = ["http://*/*", "https://*/*"] as const;
+const CONTENT_SCRIPT_ID = "jev-swot-content";
 
 // Keep session secrets confined to trusted extension contexts.  Content
 // scripts do not need API keys; making the access level explicit protects
@@ -14,6 +16,14 @@ void Promise.all([
   chrome.storage.session.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" }),
   chrome.storage.local.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" })
 ]).catch(() => undefined);
+
+void syncPersistentContentScript();
+chrome.permissions.onAdded.addListener((permissions) => {
+  if (permissions.origins?.some((origin) => PAGE_ORIGINS.includes(origin as typeof PAGE_ORIGINS[number]))) void registerPersistentContentScript();
+});
+chrome.permissions.onRemoved.addListener((permissions) => {
+  if (permissions.origins?.some((origin) => PAGE_ORIGINS.includes(origin as typeof PAGE_ORIGINS[number]))) void unregisterPersistentContentScript();
+});
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName !== "local" || !changes.settings) return;
@@ -44,6 +54,37 @@ async function startSelection(tab: chrome.tabs.Tab): Promise<void> {
   } catch {
     // Chrome internal and other restricted pages reject injection.
   }
+}
+
+async function syncPersistentContentScript(): Promise<void> {
+  try {
+    const granted = await chrome.permissions.contains({ origins: [...PAGE_ORIGINS] });
+    if (granted) await registerPersistentContentScript();
+    else await unregisterPersistentContentScript();
+  } catch {
+    // Optional page access may not be available until the user grants it.
+  }
+}
+
+async function registerPersistentContentScript(): Promise<void> {
+  try {
+    const registered = await chrome.scripting.getRegisteredContentScripts({ ids: [CONTENT_SCRIPT_ID] });
+    if (registered.length) return;
+    await chrome.scripting.registerContentScripts([{
+      id: CONTENT_SCRIPT_ID,
+      matches: [...PAGE_ORIGINS],
+      js: ["assets/content.js"],
+      runAt: "document_idle",
+      persistAcrossSessions: true
+    }]);
+  } catch {
+    // Registration can race with a service-worker restart or permission grant.
+  }
+}
+
+async function unregisterPersistentContentScript(): Promise<void> {
+  try { await chrome.scripting.unregisterContentScripts({ ids: [CONTENT_SCRIPT_ID] }); }
+  catch { /* It is fine when no persistent script is registered. */ }
 }
 
 chrome.runtime.onMessage.addListener((request: WorkerRequest, sender, sendResponse) => {

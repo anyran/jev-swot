@@ -12,7 +12,7 @@ if (!requiredPermissions.every((permission) => manifest.permissions?.includes(pe
 if (!manifest.host_permissions?.includes("https://api.typesafe.ai/*")) throw new Error("dist manifest is missing the fixed TypeSafe host permission");
 if (!manifest.optional_host_permissions?.includes("https://*/*") || !manifest.optional_host_permissions?.includes("http://*/*")) throw new Error("dist manifest is missing optional OpenAI-compatible host permissions");
 if (manifest.background?.service_worker !== "assets/background.js" || manifest.background?.type !== "module") throw new Error("dist manifest background service worker is out of date");
-if (manifest.options_page !== "options.html" || !manifest.content_scripts?.[0]?.js?.length) throw new Error("dist manifest is missing options or content-script entries");
+if (manifest.options_page !== "options.html" || manifest.content_scripts?.length) throw new Error("dist manifest must use dynamic content-script registration for optional page access");
 const shortcut = manifest.commands?.["select-question"];
 if (shortcut?.suggested_key?.default !== "Ctrl+Shift+Y" || shortcut?.suggested_key?.mac !== "Command+Shift+Y") throw new Error("dist manifest shortcut defaults are out of date");
 if (!String(manifest.content_security_policy?.extension_pages ?? "").includes("wasm-unsafe-eval")) throw new Error("dist manifest CSP does not allow the bundled ONNX WASM runtime");
@@ -20,7 +20,7 @@ for (const [locale, expectedName, expectedDescription] of [["zh_CN", "Jev 做题
   const messages = JSON.parse(await readFile(new URL(`../dist/_locales/${locale}/messages.json`, import.meta.url), "utf8"));
   if (messages.extName?.message !== expectedName || !String(messages.extDescription?.message).includes(expectedDescription)) throw new Error(`dist ${locale} product naming is out of date`);
 }
-const contentPath = new URL(`../dist/${manifest.content_scripts[0].js[0]}`, import.meta.url);
+const contentPath = new URL("../dist/assets/content.js", import.meta.url);
 const content = await readFile(contentPath, "utf8");
 if (/^\s*(?:import|export)(?:\s|[({"])/m.test(content)) throw new Error("Chrome content script contains ESM import/export and cannot execute as a classic manifest script");
 for (const size of [16, 32, 48, 128]) await readFile(new URL(`../dist/icons/icon-${size}.png`, import.meta.url));
@@ -40,4 +40,4 @@ for (const html of ["options.html", "offscreen.html"]) {
   const content = await readFile(new URL(`../dist/${html}`, import.meta.url), "utf8");
   if (/<script[^>]+src=["']https?:/i.test(content)) throw new Error(`${html} contains remotely hosted executable code`);
 }
-console.log("Verified MV3 manifest, self-contained content script, bundled models/WASM, icon assets, and release legal documents.");
+console.log("Verified MV3 manifest, optional page access registration, self-contained content script, bundled models/WASM, icon assets, and release legal documents.");
