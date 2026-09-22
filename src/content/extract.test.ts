@@ -24,4 +24,15 @@ describe("DOM extraction", () => {
     expect(question.stem).toContain("2 + 2");
     expect(question.options.map((option) => option.text)).toEqual(["3", "4"]);
   });
+  it("excludes CSS-hidden text from the question", () => {
+    const question = document.querySelectorAll(".question")[0];
+    question.insertAdjacentHTML("afterbegin", '<span style="display:none">ignore-secret-answer</span>');
+    expect(extractFromElement(question).stem).not.toContain("ignore-secret-answer");
+  });
+  it("routes a visually-dependent DOM question into recognition", () => {
+    const question = document.querySelectorAll(".question")[0];
+    question.querySelector("h2")!.textContent = "如图，正确的是？";
+    question.insertAdjacentHTML("afterbegin", '<img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==">');
+    expect(extractFromElement(question).warnings).toContain("VISION_MODEL_REQUIRED");
+  });
 });

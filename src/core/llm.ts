@@ -41,7 +41,7 @@ async function structuredQuestion(messages: Message[], settings: LLMSettings, ap
   throw lastError ?? new LlmError("模型未返回有效题目结构。");
 }
 export async function recognizeWithVision(imageDataUrl: string, settings: LLMSettings, apiKey: string, signal?: AbortSignal): Promise<Partial<ExtractedQuestion>> {
-  return structuredQuestion([{ role: "system", content: "从题目截图中忠实提取题干和选项。不要解题，不要补充看不见的内容。如果作答依赖图表、几何图、化学结构或其他非文字视觉信息，visualDependency 必须为 true 并简述原因。只输出 JSON。" }, { role: "user", content: [{ type: "text", text: "提取这道题。" }, { type: "image_url", image_url: { url: imageDataUrl } }] }], settings, apiKey, signal);
+  return structuredQuestion([{ role: "system", content: "从题目截图中忠实提取题干和选项。不要解题，不要补充看不见的内容。如果作答依赖图表、几何图、化学结构、公式排版或其他非文字视觉信息，visualDependency 必须为 true，visualDependencyReason 简述原因，并在 context 中客观、完整地描述解题所需的可见关系、标注和数值，供后续判断模型使用。只输出 JSON。" }, { role: "user", content: [{ type: "text", text: "提取这道题及作答所需的视觉信息。" }, { type: "image_url", image_url: { url: imageDataUrl } }] }], settings, apiKey, signal);
 }
 export async function structureOcrText(text: string, settings: LLMSettings, apiKey: string, signal?: AbortSignal): Promise<Partial<ExtractedQuestion>> {
   return structuredQuestion([{ role: "system", content: "将 OCR 文本忠实整理为题目结构。不要解题或改写内容。visualDependency 设为 false，visualDependencyReason 设为空字符串。只输出 JSON。" }, { role: "user", content: text }], settings, apiKey, signal);

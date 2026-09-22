@@ -2,7 +2,7 @@ import { askJev } from "../core/typesafe";
 import { LlmError, explainAnswer, recognizeWithVision, streamExplanation, structureOcrText } from "../core/llm";
 import { parseQuestionText, stableOptionId, validateQuestion } from "../core/question";
 import { getSecrets, getSettings, setSecrets } from "../shared/storage";
-import type { ExtractedQuestion, WorkerRequest, WorkerResponse } from "../shared/types";
+import type { ExtractedQuestion, RecognitionPreview, WorkerRequest, WorkerResponse } from "../shared/types";
 
 const activeRequests = new Map<string, AbortController>();
 
@@ -66,30 +66,32 @@ async function handle(request: Exclude<WorkerRequest, { type: "OCR" | "CROP_IMAG
   }
   const controller = new AbortController(); activeRequests.set(request.requestId, controller);
   let question = request.question;
+  let preview: RecognitionPreview | undefined;
   try {
-    if (validateQuestion(question).length) {
+    if (validateQuestion(question).length || question.warnings.includes("VISION_MODEL_REQUIRED")) {
       if (!request.captureAuthorized) return { ok: false, code: "CAPTURE_REQUIRES_SHORTCUT", message: "这道题需要截图识别。请使用扩展框选快捷键重新选择题目，以授予当前页面的临时截图权限。", recoverable: true };
       const canUseVision = !!secrets.llmApiKey && settings.llm.vision !== "unsupported" && secrets.visionDetected !== "unsupported";
       if (canUseVision && settings.confirmVisionUpload && !request.visionConsent) {
         return { ok: false, code: "VISION_CONSENT_REQUIRED", message: "DOM 无法完整提取这道题。是否允许将当前题目选区截图发送给你配置的视觉模型？", recoverable: true };
       }
       const screenshot = request.screenshot ?? await capture(sender.tab?.windowId);
-      question = await recognizeFallback(question, screenshot, request.devicePixelRatio ?? 1, settings, secrets, controller.signal, request.visionConsent !== "deny");
+      const recognized = await recognizeFallback(question, screenshot, request.devicePixelRatio ?? 1, settings, secrets, controller.signal, request.visionConsent !== "deny");
+      question = recognized.question; preview = recognized.preview;
     }
     const errors = validateQuestion(question);
-    if (errors.length) return { ok: false, code: "QUESTION_INCOMPLETE", message: `${errors.join("；")}。请在覆盖层中校正后重试。`, recoverable: true };
+    if (errors.length) return { ok: false, code: "QUESTION_INCOMPLETE", message: `${errors.join("；")}。请在覆盖层中校正后重试。`, recoverable: true, question, preview };
     if (question.source === "local-ocr" && question.recognitionConfidence < settings.ocrThreshold) {
-      return { ok: false, code: "LOW_OCR_CONFIDENCE", message: `OCR 置信度 ${Math.round(question.recognitionConfidence * 100)}%，低于阈值。请校正后重试。`, recoverable: true };
+      return { ok: false, code: "LOW_OCR_CONFIDENCE", message: `OCR 置信度 ${Math.round(question.recognitionConfidence * 100)}%，低于阈值。请校正后重试。`, recoverable: true, question, preview };
     }
     if (question.source === "local-ocr" && question.warnings.includes("VISION_MODEL_REQUIRED")) {
-      return { ok: false, code: "VISION_MODEL_REQUIRED", message: "本题可能依赖图表、几何关系或其他视觉信息，本地 OCR 只能读取文字。请配置支持图像的模型，或在校正界面补充完整的图形描述。", recoverable: true };
+      return { ok: false, code: "VISION_MODEL_REQUIRED", message: "本题可能依赖图表、几何关系或其他视觉信息，本地 OCR 只能读取文字。请配置支持图像的模型，或在校正界面补充完整的图形描述。", recoverable: true, question, preview };
     }
-    if (!secrets.typeSafeApiKey) return { ok: false, code: "JEV_KEY_MISSING", message: "请先在设置页填写 TypeSafe API Key。", recoverable: true };
-    return { ok: true, question, probability: await askJev(question, secrets.typeSafeApiKey, controller.signal) };
+    if (!secrets.typeSafeApiKey) return { ok: false, code: "JEV_KEY_MISSING", message: "请先在设置页填写 TypeSafe API Key。", recoverable: true, question, preview };
+    return { ok: true, question, probability: await askJev(question, secrets.typeSafeApiKey, controller.signal), preview };
   } finally { activeRequests.delete(request.requestId); }
 }
 
-async function recognizeFallback(base: ExtractedQuestion, screenshot: string, devicePixelRatio: number, settings: Awaited<ReturnType<typeof getSettings>>, secrets: Awaited<ReturnType<typeof getSecrets>>, signal: AbortSignal, allowVision: boolean): Promise<ExtractedQuestion> {
+async function recognizeFallback(base: ExtractedQuestion, screenshot: string, devicePixelRatio: number, settings: Awaited<ReturnType<typeof getSettings>>, secrets: Awaited<ReturnType<typeof getSecrets>>, signal: AbortSignal, allowVision: boolean): Promise<{ question: ExtractedQuestion; preview?: RecognitionPreview }> {
   await ensureOffscreen();
   const cropped = await chrome.runtime.sendMessage({ type: "CROP_IMAGE", imageDataUrl: screenshot, rect: base.sourceRect, devicePixelRatio });
   if (!cropped?.ok) throw new Error(cropped?.message ?? "截图裁切失败");
@@ -102,7 +104,7 @@ async function recognizeFallback(base: ExtractedQuestion, screenshot: string, de
         if (!(error instanceof LlmError) || !error.retryable) throw error;
         parsed = await recognizeWithVision(questionImage, settings.llm, secrets.llmApiKey, signal);
       }
-      return normalizeParsed(parsed, base, "vision", 0.9);
+      return { question: normalizeParsed(parsed, base, "vision", 0.9), preview: { imageDataUrl: questionImage, width: cropped.width, height: cropped.height, boxes: [] } };
     } catch (error) {
       if ((error as Error & { unsupportedVision?: boolean }).unsupportedVision) await setSecrets({ ...secrets, visionDetected: "unsupported" });
     }
@@ -116,7 +118,7 @@ async function recognizeFallback(base: ExtractedQuestion, screenshot: string, de
     try { parsed = normalizeParsed(await structureOcrText(ocr.text, settings.llm, secrets.llmApiKey, signal), parsed, "local-ocr", ocr.confidence); } catch { /* keep deterministic parse */ }
   }
   attachOcrRects(parsed, ocr.boxes ?? [], base.sourceRect, cropped.width, cropped.height);
-  return parsed;
+  return { question: parsed, preview: { imageDataUrl: questionImage, width: cropped.width, height: cropped.height, boxes: ocr.boxes ?? [] } };
 }
 
 function attachOcrRects(question: ExtractedQuestion, boxes: Array<{ x: number; y: number; width: number; height: number; text: string; confidence: number }>, sourceRect: ExtractedQuestion["sourceRect"], cropWidth: number, cropHeight: number) {
@@ -132,7 +134,8 @@ function attachOcrRects(question: ExtractedQuestion, boxes: Array<{ x: number; y
 function normalizeParsed(parsed: Partial<ExtractedQuestion>, base: ExtractedQuestion, source: "vision" | "local-ocr", confidence: number): ExtractedQuestion {
   const options = (parsed.options ?? []).map((x, i) => ({ id: stableOptionId(i), label: x.label || String.fromCharCode(65 + i), text: x.text, confidence: x.confidence }));
   const warnings = [...(parsed.warnings ?? [])];
-  if (parsed.visualDependency) warnings.push("POSSIBLE_DIAGRAM", "VISION_MODEL_REQUIRED");
+  if (parsed.visualDependency) warnings.push("POSSIBLE_DIAGRAM");
+  if (source === "local-ocr" && parsed.visualDependency) warnings.push("VISION_MODEL_REQUIRED");
   return { ...base, source, questionType: parsed.questionType ?? "unknown", stem: parsed.stem?.trim() ?? "", context: parsed.context ?? "", options, recognitionConfidence: confidence, warnings: [...new Set(warnings)], visualDependency: parsed.visualDependency, visualDependencyReason: parsed.visualDependencyReason };
 }
 async function capture(windowId?: number): Promise<string> {

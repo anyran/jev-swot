@@ -30,6 +30,8 @@ export function validateQuestion(question: ExtractedQuestion): string[] {
   if (question.options.length < 2) errors.push("至少需要两个选项");
   if (question.options.length > 255) errors.push("选项不能超过 255 个");
   if (new Set(question.options.map((x) => x.id)).size !== question.options.length) errors.push("选项 ID 重复");
+  if (question.options.some((x) => !x.label.trim())) errors.push("选项标签不能为空");
+  if (new Set(question.options.map((x) => x.label.trim().toLocaleUpperCase())).size !== question.options.length) errors.push("选项标签重复");
   if (question.options.some((x) => !x.text.trim())) errors.push("选项内容不能为空");
   return errors;
 }

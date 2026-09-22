@@ -9,4 +9,9 @@ describe("question parsing", () => {
     expect(validateQuestion(q)).toEqual([]);
   });
   it("flags diagrams", () => expect(parseQuestionText("如图所示\nA. 1\nB. 2").warnings).toContain("POSSIBLE_DIAGRAM"));
+  it("rejects duplicate option labels", () => {
+    const q = parseQuestionText("题目\nA. 一\nB. 二");
+    q.options[1].label = "a";
+    expect(validateQuestion(q)).toContain("选项标签重复");
+  });
 });

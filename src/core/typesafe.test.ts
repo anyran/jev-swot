@@ -21,4 +21,10 @@ describe("JEV request mapping", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response("busy", { status: 503 })).mockResolvedValueOnce(new Response(JSON.stringify({ model: "jev-test", answers: { answer: { type: "choice", confidence: .8, probabilities: { option_1: .2, option_2: .8 } } } }), { status: 200 })));
     await askJev(base, "secret"); expect(fetch).toHaveBeenCalledTimes(2);
   });
+  it("normalizes malformed Choice totals before display", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ model: "jev-test", answers: { answer: { type: "choice", confidence: 2, probabilities: { option_1: .2, option_2: .2 } } } }), { status: 200 })));
+    const result = await askJev(base, "secret");
+    expect(result.options.reduce((sum, item) => sum + item.probability, 0)).toBeCloseTo(1);
+    expect(result.confidence).toBe(1);
+  });
 });

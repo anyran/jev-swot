@@ -26,11 +26,15 @@ export async function askJev(question: ExtractedQuestion, apiKey: string, signal
   if (!response.ok) throw await apiError("JEV", response);
   const data = await response.json() as { model: string; answers: Record<string, TypeSafeAnswer> };
   if (question.questionType === "multiple") {
-    return { mode: "independent-selection", model: data.model, options: question.options.map((option) => ({ id: option.id, label: option.label, probability: (data.answers[option.id] as { noul: number })?.noul ?? 0 })) };
+    return { mode: "independent-selection", model: data.model, options: question.options.map((option) => ({ id: option.id, label: option.label, probability: probability((data.answers[option.id] as { noul: number })?.noul) })) };
   }
   const answer = data.answers.answer as Extract<TypeSafeAnswer, { type: "choice" }>;
-  return { mode: "single-distribution", model: data.model, confidence: answer.confidence, options: question.options.map((option) => ({ id: option.id, label: option.label, probability: answer.probabilities[option.id] ?? 0 })) };
+  if (!answer?.probabilities) throw new Error("JEV 返回缺少 Choice 概率。");
+  const raw = question.options.map((option) => probability(answer.probabilities[option.id])), total = raw.reduce((sum, value) => sum + value, 0);
+  if (total <= 0) throw new Error("JEV 返回的 Choice 概率无效。");
+  return { mode: "single-distribution", model: data.model || "jev-latest", confidence: probability(answer.confidence), options: question.options.map((option, index) => ({ id: option.id, label: option.label, probability: raw[index] / total })) };
 }
+function probability(value: unknown): number { const number = Number(value); return Number.isFinite(number) ? Math.max(0, Math.min(1, number)) : 0; }
 async function timedFetch(url: string, init: RequestInit, signal?: AbortSignal): Promise<Response> {
   const controller = new AbortController(), timeout = setTimeout(() => controller.abort(new DOMException("JEV 请求超时", "TimeoutError")), 30_000);
   const abort = () => controller.abort(signal?.reason); signal?.addEventListener("abort", abort, { once: true });

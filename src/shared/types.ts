@@ -8,6 +8,8 @@ export type RecognitionWarning =
   | "VISION_MODEL_REQUIRED";
 
 export interface DOMRectLike { x: number; y: number; width: number; height: number }
+export interface OcrTextBox extends DOMRectLike { text: string; confidence: number }
+export interface RecognitionPreview { imageDataUrl: string; width: number; height: number; boxes: OcrTextBox[] }
 export interface QuestionOption { id: string; label: string; text: string; confidence?: number; sourceRect?: DOMRectLike }
 export interface ExtractedQuestion {
   source: QuestionSource;
@@ -54,8 +56,8 @@ export type WorkerRequest =
   | { type: "CLEAR_SESSION" };
 
 export type WorkerResponse =
-  | { ok: true; question?: ExtractedQuestion; probability?: ProbabilityResult; explanation?: string; diagnostic?: string }
-  | { ok: false; code: string; message: string; recoverable: boolean };
+  | { ok: true; question?: ExtractedQuestion; probability?: ProbabilityResult; explanation?: string; diagnostic?: string; preview?: RecognitionPreview }
+  | { ok: false; code: string; message: string; recoverable: boolean; question?: ExtractedQuestion; preview?: RecognitionPreview };
 
 export const DEFAULT_SETTINGS: PersistentSettings = {
   llm: { baseUrl: "https://api.openai.com/v1", model: "gpt-4.1-mini", vision: "auto", structuredOutput: "auto" },

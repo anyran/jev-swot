@@ -1,10 +1,11 @@
-import type { ExtractedQuestion, ProbabilityResult, WorkerResponse } from "../shared/types";
+import type { ExtractedQuestion, ProbabilityResult, RecognitionPreview, WorkerResponse } from "../shared/types";
 
 export class ResultOverlay {
   private host = document.createElement("div");
   private root: ShadowRoot;
   private question?: ExtractedQuestion;
   private probability?: ProbabilityResult;
+  private preview?: RecognitionPreview;
   private position = { left: 16, top: 16 };
   constructor(private retry: (q: ExtractedQuestion, visionConsent?: "allow" | "deny") => void, private explain: (q: ExtractedQuestion, p: ProbabilityResult) => void, private cancel: () => void) {
     this.host.dataset.jevanswerRoot = "true";
@@ -13,11 +14,12 @@ export class ResultOverlay {
   }
   loading(question: ExtractedQuestion) { this.question = question; this.render(`<div class="status"><span class="spinner"></span>正在识别并评估… <button data-action="cancel">取消</button></div>`); }
   show(response: WorkerResponse) {
+    if (response.question) this.question = response.question;
+    if (response.preview) this.preview = response.preview;
     if (!response.ok) {
       const consent = response.code === "VISION_CONSENT_REQUIRED" ? `<div class="actions"><button data-action="local-only">仅本地 OCR</button><button class="primary" data-action="allow-vision">允许本次上传</button></div>` : "";
       this.render(`<div class="error">${escapeHtml(response.message)}</div>${consent}${response.code === "VISION_CONSENT_REQUIRED" ? "" : this.editor()}`); return;
     }
-    if (response.question) this.question = response.question;
     if (response.probability) this.probability = response.probability;
     const p = this.probability;
     if (!p) return;
@@ -30,7 +32,12 @@ export class ResultOverlay {
   private warnings() { return this.question?.warnings.length ? `<div class="warning">${this.question.warnings.map(warningText).join("；")}</div>` : ""; }
   private editor() {
     const q = this.question; if (!q) return "";
-    return `<div class="editor"><label>题型<select id="type"><option value="single" ${q.questionType === "single" ? "selected" : ""}>单选</option><option value="multiple" ${q.questionType === "multiple" ? "selected" : ""}>多选</option></select></label><label>题干<textarea id="stem">${escapeHtml(q.stem)}</textarea></label><label>选项（每行一个）<textarea id="options">${q.options.map((x) => `${x.label}. ${x.text}`).join("\n")}</textarea></label><label>补充上下文/图形描述（可选）<textarea id="context">${escapeHtml(q.context ?? "")}</textarea></label><button class="primary" data-action="retry">重新判断</button></div>`;
+    return `<div class="editor">${this.previewHtml()}<label>题型<select id="type"><option value="single" ${q.questionType === "single" ? "selected" : ""}>单选</option><option value="multiple" ${q.questionType === "multiple" ? "selected" : ""}>多选</option></select></label><label>题干<textarea id="stem">${escapeHtml(q.stem)}</textarea></label><label>选项（每行一个）<textarea id="options">${escapeHtml(q.options.map((x) => `${x.label}. ${x.text}`).join("\n"))}</textarea></label><label>补充上下文/图形描述（可选）<textarea id="context">${escapeHtml(q.context ?? "")}</textarea></label><button class="primary" data-action="retry">重新判断</button></div>`;
+  }
+  private previewHtml() {
+    const p = this.preview; if (!p) return "";
+    const boxes = p.boxes.map((box) => `<button type="button" class="ocr-box" title="${escapeHtml(box.text)} · ${(box.confidence * 100).toFixed(0)}%" style="left:${box.x / p.width * 100}%;top:${box.y / p.height * 100}%;width:${box.width / p.width * 100}%;height:${box.height / p.height * 100}%"></button>`).join("");
+    return `<details class="preview" open><summary>识别原图与文本框</summary><div class="preview-image"><img src="${escapeHtml(p.imageDataUrl)}" alt="本次识别的题目截图">${boxes}</div><small>点击或悬停文本框可查看 OCR 文字和置信度；截图仅保留在本次覆盖层内。</small></details>`;
   }
   private render(content: string) {
     this.root.innerHTML = `<style>${CSS_TEXT}</style><section style="left:${this.position.left}px;top:${this.position.top}px"><header><b>JevAnswer</b><span><button data-action="collapse">—</button><button data-action="close">×</button></span></header><main>${content}</main></section>`;
@@ -43,6 +50,7 @@ export class ResultOverlay {
     this.root.querySelector('[data-action="local-only"]')?.addEventListener("click", () => { if (this.question) this.retry(this.question, "deny"); });
     this.root.querySelector('[data-action="allow-vision"]')?.addEventListener("click", () => { if (this.question) this.retry(this.question, "allow"); });
     this.root.querySelectorAll<HTMLElement>("[data-option-id]").forEach((row) => row.addEventListener("click", () => this.highlightOption(row.dataset.optionId!)));
+    this.root.querySelectorAll<HTMLElement>(".ocr-box").forEach((box) => box.addEventListener("click", () => { const summary = box.getAttribute("title"); if (summary) box.setAttribute("data-label", summary); }));
     this.bindDragging();
   }
   private highlightOption(id: string) {
@@ -81,4 +89,4 @@ export class ResultOverlay {
 }
 function warningText(w: string) { return ({ LOW_OCR_CONFIDENCE: "OCR 置信度较低", POSSIBLE_FORMULA: "可能包含公式", POSSIBLE_DIAGRAM: "可能依赖图形", INCOMPLETE_OPTIONS: "选项可能不完整", VISION_MODEL_REQUIRED: "建议使用视觉模型" } as Record<string, string>)[w] ?? w; }
 function escapeHtml(value: string) { return value.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!); }
-const CSS_TEXT = `:host{all:initial}section{position:fixed;z-index:2147483647;left:16px;top:16px;width:360px;max-height:calc(100vh - 32px);overflow:auto;background:#111827;color:#f9fafb;border:1px solid #374151;border-radius:14px;box-shadow:0 18px 48px #0006;font:14px/1.45 system-ui,sans-serif}header{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-bottom:1px solid #374151;cursor:move}header button{background:none;border:0;color:#d1d5db;font-size:18px}main{padding:12px}.hidden{display:none}.row{display:grid;grid-template-columns:24px 1fr 52px;gap:8px;align-items:center;margin:9px 0}.row[data-option-id]{cursor:pointer}.row[data-option-id]:hover{background:#ffffff0d}.bar{height:9px;background:#374151;border-radius:9px;overflow:hidden}.bar i{display:block;height:100%;background:linear-gradient(90deg,#22c55e,#60a5fa)}small{color:#9ca3af}.warning,.error{margin:10px 0;padding:9px;border-radius:8px;background:#78350f;color:#fef3c7}.error{background:#7f1d1d}.actions{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}button{cursor:pointer;border:1px solid #4b5563;background:#1f2937;color:#fff;padding:6px 10px;border-radius:7px}.primary{background:#2563eb;border-color:#3b82f6}.editor label{display:block;margin:9px 0}.editor textarea,.editor select{box-sizing:border-box;width:100%;margin-top:4px;background:#0f172a;color:#fff;border:1px solid #475569;border-radius:7px;padding:7px}.editor textarea{min-height:64px}.spinner{display:inline-block;width:14px;height:14px;border:2px solid #64748b;border-top-color:#fff;border-radius:50%;animation:s .8s linear infinite;margin-right:8px}@keyframes s{to{transform:rotate(360deg)}}#explanation{white-space:pre-wrap;margin-top:12px;color:#e5e7eb}`;
+const CSS_TEXT = `:host{all:initial}section{position:fixed;z-index:2147483647;left:16px;top:16px;width:360px;max-height:calc(100vh - 32px);overflow:auto;background:#111827;color:#f9fafb;border:1px solid #374151;border-radius:14px;box-shadow:0 18px 48px #0006;font:14px/1.45 system-ui,sans-serif}header{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-bottom:1px solid #374151;cursor:move}header button{background:none;border:0;color:#d1d5db;font-size:18px}main{padding:12px}.hidden{display:none}.row{display:grid;grid-template-columns:24px 1fr 52px;gap:8px;align-items:center;margin:9px 0}.row[data-option-id]{cursor:pointer}.row[data-option-id]:hover{background:#ffffff0d}.bar{height:9px;background:#374151;border-radius:9px;overflow:hidden}.bar i{display:block;height:100%;background:linear-gradient(90deg,#22c55e,#60a5fa)}small{color:#9ca3af}.warning,.error{margin:10px 0;padding:9px;border-radius:8px;background:#78350f;color:#fef3c7}.error{background:#7f1d1d}.actions{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}button{cursor:pointer;border:1px solid #4b5563;background:#1f2937;color:#fff;padding:6px 10px;border-radius:7px}.primary{background:#2563eb;border-color:#3b82f6}.editor label{display:block;margin:9px 0}.editor textarea,.editor select{box-sizing:border-box;width:100%;margin-top:4px;background:#0f172a;color:#fff;border:1px solid #475569;border-radius:7px;padding:7px}.editor textarea{min-height:64px}.preview{margin-bottom:12px}.preview summary{cursor:pointer}.preview-image{position:relative;margin:7px 0;line-height:0}.preview-image img{display:block;width:100%;height:auto;background:#fff}.ocr-box{position:absolute;padding:0;border:1px solid #22d3ee;background:#22d3ee18;border-radius:2px}.ocr-box:hover,.ocr-box:focus{background:#f59e0b33;border-color:#f59e0b}.ocr-box[data-label]::after{content:attr(data-label);position:absolute;left:0;top:100%;z-index:2;min-width:120px;padding:4px;background:#020617;color:white;font:11px/1.3 system-ui;white-space:normal}.spinner{display:inline-block;width:14px;height:14px;border:2px solid #64748b;border-top-color:#fff;border-radius:50%;animation:s .8s linear infinite;margin-right:8px}@keyframes s{to{transform:rotate(360deg)}}#explanation{white-space:pre-wrap;margin-top:12px;color:#e5e7eb}`;

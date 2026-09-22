@@ -2,7 +2,8 @@ import * as ort from "onnxruntime-web/webgpu";
 import { inferVisualWarnings } from "../core/question";
 import type { DOMRectLike, RecognitionWarning } from "../shared/types";
 
-interface Box { x: number; y: number; width: number; height: number; confidence: number }
+interface Point { x: number; y: number }
+interface Box { x: number; y: number; width: number; height: number; confidence: number; quad?: [Point, Point, Point, Point]; lowConfidenceRatio?: number }
 export interface OcrResult { text: string; confidence: number; warnings: RecognitionWarning[]; boxes: Array<Box & { text: string }>; backend: "wasm" | "webgpu" }
 
 export class PaddleOcr {
@@ -60,20 +61,24 @@ export class PaddleOcr {
     const boxes = probabilityBoxes(output.data as Float32Array, output.dims, crop.width / detImage.width, crop.height / detImage.height).sort((a, b) => b.confidence - a.confidence).slice(0, 64);
     const results: Array<Box & { text: string }> = [];
     for (let offset = 0; offset < boxes.length; offset += 8) {
-      const batchBoxes = boxes.slice(offset, offset + 8), lines = batchBoxes.map((box) => resizeForRecognition(cropRegion(crop, box)));
+      const batchBoxes = boxes.slice(offset, offset + 8), lines = batchBoxes.map((box) => resizeForRecognition(perspectiveCrop(crop, box)));
       const width = Math.max(...lines.map((line) => line.width));
       const tensor = imageTensorBatch(lines.map((line) => padToWidth(line, width)), width, 48);
       const recResult = await this.recognizer!.run({ [this.recognizer!.inputNames[0]]: tensor });
       const outputTensor = recResult[this.recognizer!.outputNames[0]];
-      batchBoxes.forEach((box, index) => { const decoded = decodeCtc(outputTensor, this.dictionary!, index); if (decoded.text) results.push({ ...box, text: decoded.text, confidence: box.confidence * decoded.confidence }); });
+      batchBoxes.forEach((box, index) => { const decoded = decodeCtc(outputTensor, this.dictionary!, index); if (decoded.text) results.push({ ...box, text: decoded.text, confidence: box.confidence * decoded.confidence, lowConfidenceRatio: decoded.lowConfidenceRatio }); });
     }
     results.sort((a, b) => Math.abs(a.y - b.y) < Math.max(a.height, b.height) * 0.5 ? a.x - b.x : a.y - b.y);
     const text = results.map((x) => x.text).join("\n");
-    const confidence = results.length ? results.reduce((sum, x) => sum + x.confidence, 0) / results.length : 0;
+    const averageConfidence = results.length ? results.reduce((sum, x) => sum + x.confidence, 0) / results.length : 0;
+    const lowConfidenceRatio = results.length ? results.reduce((sum, x) => sum + (x.lowConfidenceRatio ?? 1), 0) / results.length : 1;
     const textArea = results.reduce((sum, x) => sum + x.width * x.height, 0) / Math.max(1, crop.width * crop.height);
+    const lines=text.split("\n"),firstOption=lines.findIndex(line=>/^\s*(?:[A-H]|[1-9]|[①-⑨])[.、)）:]/i.test(line)),optionCount=lines.filter(line=>/^\s*(?:[A-H]|[1-9]|[①-⑨])[.、)）:]/i.test(line)).length;
+    const structureScore=(firstOption>0?0.05:0)+Math.min(0.1,optionCount*0.05),areaScore=textArea>=0.01?0.05:Math.min(0.05,textArea*5);
+    const confidence=Math.max(0,Math.min(1,averageConfidence*0.7+(1-lowConfidenceRatio)*0.1+structureScore+areaScore));
     const warnings = inferVisualWarnings(text, textArea);
     if (confidence < 0.72) warnings.push("LOW_OCR_CONFIDENCE");
-    if (warnings.includes("POSSIBLE_DIAGRAM")) warnings.push("VISION_MODEL_REQUIRED");
+    if (warnings.includes("POSSIBLE_DIAGRAM") || warnings.includes("POSSIBLE_FORMULA")) warnings.push("VISION_MODEL_REQUIRED");
     return { text, confidence, warnings: [...new Set(warnings)], boxes: results, backend: this.backend };
   }
 }
@@ -160,16 +165,43 @@ function probabilityBoxes(data: Float32Array, dims: readonly number[], sx: numbe
   const step = Math.max(1, Math.floor(Math.min(w, h) / 400));
   for (let y = 0; y < h; y += step) for (let x = 0; x < w; x += step) {
     const start = y * w + x; if (seen[start] || data[start] < 0.3) continue;
-    const queue = [start]; seen[start] = 1; let minX=x,maxX=x,minY=y,maxY=y,sum=0,count=0;
-    while (queue.length) { const p=queue.pop()!, px=p%w, py=Math.floor(p/w); sum+=data[p];count++;minX=Math.min(minX,px);maxX=Math.max(maxX,px);minY=Math.min(minY,py);maxY=Math.max(maxY,py); for(const n of [p-1,p+1,p-w,p+w]) if(n>=0&&n<data.length&&!seen[n]&&data[n]>=0.3){seen[n]=1;queue.push(n);} }
-    if (count > 8 && sum / count > 0.5) boxes.push({ x: Math.max(0,(minX-2)*sx), y: Math.max(0,(minY-2)*sy), width: (maxX-minX+5)*sx, height:(maxY-minY+5)*sy, confidence: sum/count });
+    const queue = [start]; seen[start] = 1; let minX=x,maxX=x,minY=y,maxY=y,sum=0,count=0,sumX=0,sumY=0,sumXX=0,sumYY=0,sumXY=0;
+    while (queue.length) { const p=queue.pop()!, px=p%w, py=Math.floor(p/w); sum+=data[p];count++;sumX+=px;sumY+=py;sumXX+=px*px;sumYY+=py*py;sumXY+=px*py;minX=Math.min(minX,px);maxX=Math.max(maxX,px);minY=Math.min(minY,py);maxY=Math.max(maxY,py); const neighbors:number[]=[];if(px>0)neighbors.push(p-1);if(px+1<w)neighbors.push(p+1);if(py>0)neighbors.push(p-w);if(py+1<h)neighbors.push(p+w);for(const n of neighbors)if(!seen[n]&&data[n]>=0.3){seen[n]=1;queue.push(n);} }
+    if (count > 8 && sum / count > 0.5) {
+      const cx=sumX/count,cy=sumY/count,covXX=sumXX/count-cx*cx,covYY=sumYY/count-cy*cy,covXY=sumXY/count-cx*cy;
+      const angle=0.5*Math.atan2(2*covXY,covXX-covYY),ux=Math.cos(angle),uy=Math.sin(angle),vx=-uy,vy=ux;
+      let minU=Infinity,maxU=-Infinity,minV=Infinity,maxV=-Infinity;
+      for(let py=minY;py<=maxY;py++) for(let px=minX;px<=maxX;px++) if(data[py*w+px]>=0.3){const dx=px-cx,dy=py-cy,u=dx*ux+dy*uy,v=dx*vx+dy*vy;minU=Math.min(minU,u);maxU=Math.max(maxU,u);minV=Math.min(minV,v);maxV=Math.max(maxV,v);}
+      const pad=2,point=(u:number,v:number):Point=>({x:(cx+u*ux+v*vx)*sx,y:(cy+u*uy+v*vy)*sy});
+      const quad=[point(minU-pad,minV-pad),point(maxU+pad,minV-pad),point(maxU+pad,maxV+pad),point(minU-pad,maxV+pad)] as [Point,Point,Point,Point];
+      const qx=quad.map(p=>p.x),qy=quad.map(p=>p.y),left=Math.max(0,Math.min(...qx)),top=Math.max(0,Math.min(...qy)),right=Math.min(w*sx,Math.max(...qx)),bottom=Math.min(h*sy,Math.max(...qy));
+      boxes.push({ x:left,y:top,width:Math.max(1,right-left),height:Math.max(1,bottom-top),confidence:sum/count,quad });
+    }
   }
   return boxes;
 }
+function perspectiveCrop(image: ImageData, box: Box): ImageData {
+  if (!box.quad) return cropRegion(image, box);
+  const [tl,tr,br,bl]=box.quad,width=Math.max(1,Math.round(Math.max(distance(tl,tr),distance(bl,br)))),height=Math.max(1,Math.round(Math.max(distance(tl,bl),distance(tr,br))));
+  const output=new ImageData(width,height);
+  for(let y=0;y<height;y++) for(let x=0;x<width;x++){
+    const point=projectQuadPoint(box.quad,x/Math.max(1,width-1),y/Math.max(1,height-1));
+    sampleBilinear(image,point.x,point.y,output.data,(y*width+x)*4);
+  }
+  return output;
+}
 function cropRegion(image: ImageData, box: Box): ImageData { const canvas=new OffscreenCanvas(Math.max(1,Math.round(box.width)),Math.max(1,Math.round(box.height))); const source=new OffscreenCanvas(image.width,image.height);source.getContext("2d")!.putImageData(image,0,0);canvas.getContext("2d")!.drawImage(source,box.x,box.y,box.width,box.height,0,0,canvas.width,canvas.height);return canvas.getContext("2d",{willReadFrequently:true})!.getImageData(0,0,canvas.width,canvas.height); }
-function decodeCtc(tensor: ort.Tensor, dict: string[], batchIndex = 0): { text: string; confidence: number } {
-  const data=tensor.data as Float32Array,dims=tensor.dims,classes=Number(dims[dims.length-1]),steps=Number(dims[dims.length-2]);let previous=-1,text="",score=0,count=0;
+export function projectQuadPoint([p0,p1,p2,p3]: [Point,Point,Point,Point],u:number,v:number): Point {
+  const dx1=p1.x-p2.x,dx2=p3.x-p2.x,dx3=p0.x-p1.x+p2.x-p3.x,dy1=p1.y-p2.y,dy2=p3.y-p2.y,dy3=p0.y-p1.y+p2.y-p3.y,den=dx1*dy2-dx2*dy1;
+  let g=0,h=0;if(Math.abs(den)>1e-8){g=(dx3*dy2-dx2*dy3)/den;h=(dx1*dy3-dx3*dy1)/den;}
+  const a=p1.x-p0.x+g*p1.x,b=p3.x-p0.x+h*p3.x,c=p0.x,d=p1.y-p0.y+g*p1.y,e=p3.y-p0.y+h*p3.y,f=p0.y,q=g*u+h*v+1;
+  return {x:(a*u+b*v+c)/q,y:(d*u+e*v+f)/q};
+}
+function distance(a:Point,b:Point){return Math.hypot(a.x-b.x,a.y-b.y);}
+function sampleBilinear(image:ImageData,x:number,y:number,target:Uint8ClampedArray,offset:number){const x0=Math.max(0,Math.min(image.width-1,Math.floor(x))),y0=Math.max(0,Math.min(image.height-1,Math.floor(y))),x1=Math.min(image.width-1,x0+1),y1=Math.min(image.height-1,y0+1),fx=Math.max(0,Math.min(1,x-x0)),fy=Math.max(0,Math.min(1,y-y0));for(let c=0;c<4;c++){const top=image.data[(y0*image.width+x0)*4+c]*(1-fx)+image.data[(y0*image.width+x1)*4+c]*fx,bottom=image.data[(y1*image.width+x0)*4+c]*(1-fx)+image.data[(y1*image.width+x1)*4+c]*fx;target[offset+c]=top*(1-fy)+bottom*fy;}}
+export function decodeCtc(tensor: ort.Tensor, dict: string[], batchIndex = 0): { text: string; confidence: number; lowConfidenceRatio: number } {
+  const data=tensor.data as Float32Array,dims=tensor.dims,classes=Number(dims[dims.length-1]),steps=Number(dims[dims.length-2]);let previous=-1,text="",score=0,count=0,low=0;
   const base=batchIndex*steps*classes;
-  for(let t=0;t<steps;t++){let best=0,bestValue=-Infinity;for(let c=0;c<classes;c++){const value=data[base+t*classes+c];if(value>bestValue){bestValue=value;best=c;}}if(best!==0&&best!==previous){text+=dict[best]??"";score+=Math.max(0,Math.min(1,bestValue));count++;}previous=best;}
-  return {text:text.trim(),confidence:count?score/count:0};
+  for(let t=0;t<steps;t++){let best=0,bestValue=-Infinity;for(let c=0;c<classes;c++){const value=data[base+t*classes+c];if(value>bestValue){bestValue=value;best=c;}}if(best!==0&&best!==previous){text+=dict[best]??"";score+=Math.max(0,Math.min(1,bestValue));count++;if(bestValue<0.5)low++;}previous=best;}
+  return {text:text.trim(),confidence:count?score/count:0,lowConfidenceRatio:count?low/count:1};
 }

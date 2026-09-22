@@ -1,6 +1,7 @@
-import type { ExtractedQuestion, QuestionOption } from "../shared/types";
+import type { ExtractedQuestion, QuestionOption, RecognitionWarning } from "../shared/types";
 
-const EXCLUDED = "script,style,noscript,nav,header,footer,[hidden],[aria-hidden='true'],[data-jevanswer-root]";
+const EXCLUDED = "script,style,noscript,nav,header,footer,aside,[role='banner'],[role='navigation'],[hidden],[aria-hidden='true'],[data-jevanswer-root]";
+const VISUAL_CUE = /(?:如图|下图|图中|曲线|阴影|图表|几何|diagram|graph|figure|chart)/i;
 function visible(element: Element): boolean {
   const style = getComputedStyle(element);
   const rect = element.getBoundingClientRect();
@@ -8,6 +9,16 @@ function visible(element: Element): boolean {
 }
 function rectOf(element: Element) { const r = element.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; }
 function cleanText(text: string): string { return text.replace(/[\t ]+/g, " ").replace(/\n{3,}/g, "\n\n").trim(); }
+function visibleText(element: Element): string {
+  const pieces: string[] = [], walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+  let node: Node | null;
+  while ((node = walker.nextNode())) {
+    const parent = node.parentElement;
+    if (!parent || parent.closest(EXCLUDED) || !visible(parent)) continue;
+    const value = node.textContent?.trim(); if (value) pieces.push(value);
+  }
+  return cleanText(pieces.join("\n"));
+}
 
 export function findQuestionContainer(start: Element): Element {
   let current: Element | null = start;
@@ -28,19 +39,17 @@ export function findQuestionContainer(start: Element): Element {
 }
 
 export function extractFromElement(element: Element): ExtractedQuestion {
-  const clone = element.cloneNode(true) as HTMLElement;
-  clone.querySelectorAll(EXCLUDED).forEach((node) => node.remove());
   const controls = [...element.querySelectorAll<HTMLInputElement>("input[type=radio],input[type=checkbox]")].filter(visible);
   const optionElements = controls.length
     ? controls.map((input) => input.closest("label") ?? (input.id ? element.querySelector(`label[for='${CSS.escape(input.id)}']`) : null) ?? input.parentElement).filter(Boolean) as Element[]
     : [...element.querySelectorAll("li,label,[role=radio],[role=checkbox]")].filter(visible);
   const dedup = [...new Set(optionElements)];
   const options: QuestionOption[] = dedup.map((node, index) => {
-    const raw = cleanText((node as HTMLElement).innerText || node.textContent || "");
+    const raw = cleanText(visibleText(node) || node.getAttribute("aria-label") || "");
     const match = /^\s*([A-Ha-h]|[1-9]|[①②③④⑤⑥⑦⑧⑨])[.、)）:]?\s*(.*)$/.exec(raw);
     return { id: `option_${index + 1}`, label: match?.[1]?.toUpperCase() ?? String.fromCharCode(65 + index), text: match?.[2] || raw };
   }).filter((x) => x.text);
-  const allText = cleanText(clone.innerText || clone.textContent || "");
+  const allText = visibleText(element);
   let stem = allText;
   for (const option of options) {
     const position = stem.indexOf(option.text);
@@ -49,10 +58,15 @@ export function extractFromElement(element: Element): ExtractedQuestion {
   stem = cleanText(stem.replace(/\s*[A-H][.、)）:]?\s*$/, ""));
   const hasCheckbox = controls.some((input) => input.type === "checkbox");
   const hasRadio = controls.some((input) => input.type === "radio");
+  const hasCheckboxRole = !!element.querySelector("[role=checkbox]");
+  const hasRadioRole = !!element.querySelector("[role=radio]");
+  const hasRelevantVisual = VISUAL_CUE.test(allText) && [...element.querySelectorAll("img,canvas,svg")].some(visible);
+  const warnings: RecognitionWarning[] = stem && options.length >= 2 ? [] : ["INCOMPLETE_OPTIONS"];
+  if (hasRelevantVisual) warnings.push("POSSIBLE_DIAGRAM", "VISION_MODEL_REQUIRED");
   return {
-    source: "dom", questionType: hasCheckbox ? "multiple" : hasRadio ? "single" : "unknown",
+    source: "dom", questionType: hasCheckbox || hasCheckboxRole ? "multiple" : hasRadio || hasRadioRole ? "single" : "unknown",
     stem, options, sourceRect: rectOf(element), recognitionConfidence: stem && options.length >= 2 ? 0.95 : 0.45,
-    warnings: stem && options.length >= 2 ? [] : ["INCOMPLETE_OPTIONS"]
+    warnings
   };
 }
 
