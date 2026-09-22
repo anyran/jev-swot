@@ -35,4 +35,9 @@ describe("JEV request mapping", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ model: "jev-test", answers: { option_1: { type: "noul", noul: .8 } } }), { status: 200 })));
     await expect(askJev({ ...base, questionType: "multiple" }, "secret")).rejects.toThrow("缺少选项 B 的 Noul");
   });
+  it("redacts an API key from JEV error details", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("Bearer secret", { status: 400 })));
+    await expect(askJev(base, "secret")).rejects.toThrow(/\[redacted\]/);
+    await expect(askJev(base, "secret")).rejects.not.toThrow(/secret/);
+  });
 });

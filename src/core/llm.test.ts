@@ -56,6 +56,11 @@ describe("OpenAI-compatible structured output", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("image_url is not supported", { status: 400 })));
     await expect(recognizeWithVision("data:image/png;base64,AA==", settings, "secret")).rejects.toMatchObject({ unsupportedVision: true, retryable: false });
   });
+  it("redacts an API key from provider error details", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("Authorization: Bearer secret; token=secret", { status: 500 })));
+    await expect(structureOcrText("q", settings, "secret")).rejects.toThrow(/\[redacted\]/);
+    await expect(structureOcrText("q", settings, "secret")).rejects.not.toThrow(/secret/);
+  });
   it("classifies an OpenAI-compatible 415 image rejection as unsupported vision", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("content type image_url is unsupported", { status: 415 })));
     await expect(recognizeWithVision("data:image/png;base64,AA==", settings, "secret")).rejects.toMatchObject({ unsupportedVision: true, retryable: false });

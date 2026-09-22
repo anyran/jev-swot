@@ -70,7 +70,7 @@ async function structuredQuestion(messages: Message[], settings: LLMSettings, ap
     const unsupportedVision = visionRequest && [400, 415, 422].includes(response.status) && (/image|vision|multimodal|image_url|content.*(?:type|image)|unsupported.*(?:input|content)|(?:does|do)\s+not\s+support|invalid.*(?:image|content|modality)|only.*text|text.?only|modalit/i.test(responseText) || response.status === 415 || !responseText.trim());
     if (unsupportedVision) throw new LlmError("当前模型不支持图像输入。", response.status, true, false);
     const formatRejected = [400, 422].includes(response.status) && (/response_format|json_schema|structured|schema|unsupported.*format|not.*support.*format/i.test(responseText) || !responseText.trim());
-    lastError = new LlmError(`模型请求失败 (${response.status})${responseText ? `: ${responseText.slice(0, 160)}` : ""}`, response.status, false, response.status === 429 || response.status >= 500);
+    lastError = new LlmError(`模型请求失败 (${response.status})${responseText ? `: ${safeProviderDetail(responseText, apiKey)}` : ""}`, response.status, false, response.status === 429 || response.status >= 500);
     if (!formatRejected || !responseFormat) break;
   }
   throw lastError ?? new LlmError("模型未返回有效题目结构。");
@@ -119,6 +119,14 @@ function textContent(value: unknown): string {
   if (typeof value === "string") return value;
   if (!Array.isArray(value)) return "";
   return value.map((part) => typeof part === "string" ? part : (part && typeof part === "object" && "text" in part && typeof part.text === "string" ? part.text : "")).join("");
+}
+
+function safeProviderDetail(value: string, apiKey: string): string {
+  return value
+    .replaceAll(apiKey, "[redacted]")
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
+    .replace(/[\r\n]+/g, " ")
+    .slice(0, 160);
 }
 export function parseJsonObject(value: string | object): StructuredQuestionResult {
   if (typeof value === "object" && value !== null) return value;

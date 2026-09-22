@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fallbackOptionLabel, hasQuestionStructure, hasQuestionTextConflict, parseQuestionText, stripExcludedText, validateQuestion } from "./question";
+import { fallbackOptionLabel, hasQuestionStructure, hasQuestionTextConflict, parseQuestionText, requiresRecognitionFallback, stripExcludedText, validateQuestion } from "./question";
 
 describe("question parsing", () => {
   it("parses labelled options", () => {
@@ -52,6 +52,15 @@ describe("question parsing", () => {
     const q = parseQuestionText("哪个数字是偶数？\nA. 3\nB. 4");
     expect(q.questionType).toBe("unknown");
     expect(hasQuestionStructure(q)).toBe(true);
+  });
+  it("does not send formula-marked DOM questions directly to JEV", () => {
+    const q = parseQuestionText("x² 的值是多少？\nA. 1\nB. 2");
+    q.source = "dom";
+    expect(hasQuestionStructure(q)).toBe(true);
+    expect(requiresRecognitionFallback(q)).toBe(true);
+    q.warnings = [];
+    q.source = "user-edited";
+    expect(requiresRecognitionFallback(q)).toBe(false);
   });
   it("keeps generated labels unique for high-cardinality choices", () => {
     expect(fallbackOptionLabel(0)).toBe("A");

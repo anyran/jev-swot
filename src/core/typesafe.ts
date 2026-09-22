@@ -24,7 +24,7 @@ export async function askJev(question: ExtractedQuestion, apiKey: string, signal
     await delay(retryAfter, signal);
     response = await timedFetch("https://api.typesafe.ai/v1/systemone", init, signal);
   }
-  if (!response.ok) throw await apiError("JEV", response);
+  if (!response.ok) throw await apiError("JEV", response, apiKey);
   const data = await response.json() as { model?: string; answers?: Record<string, TypeSafeAnswer> };
   if (!data.answers) throw new Error("JEV 返回缺少答案结果。");
   if (question.questionType === "multiple") {
@@ -60,7 +60,12 @@ function delay(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-async function apiError(name: string, response: Response): Promise<Error> {
+async function apiError(name: string, response: Response, apiKey: string): Promise<Error> {
   const body = await response.text().catch(() => "");
-  return new Error(`${name} 请求失败 (${response.status})${body ? `: ${body.slice(0, 200)}` : ""}`);
+  const detail = body
+    .replaceAll(apiKey, "[redacted]")
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
+    .replace(/[\r\n]+/g, " ")
+    .slice(0, 200);
+  return new Error(`${name} 请求失败 (${response.status})${detail ? `: ${detail}` : ""}`);
 }

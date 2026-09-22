@@ -1,6 +1,6 @@
 import { askJev } from "../core/typesafe";
 import { LlmError, explainAnswer, recognizeWithVision, streamExplanation, structureOcrText } from "../core/llm";
-import { fallbackOptionLabel, hasQuestionStructure, hasQuestionTextConflict, parseQuestionText, stableOptionId, stripExcludedText, validateQuestion } from "../core/question";
+import { fallbackOptionLabel, hasQuestionTextConflict, parseQuestionText, requiresRecognitionFallback, stableOptionId, stripExcludedText, validateQuestion } from "../core/question";
 import { getSecrets, getSettings, setSecrets } from "../shared/storage";
 import type { ExtractedQuestion, RecognitionPreview, WorkerRequest, WorkerResponse } from "../shared/types";
 
@@ -58,12 +58,20 @@ async function handle(request: Exclude<WorkerRequest, { type: "OCR" | "CROP_IMAG
     if (secrets.llmApiKey) {
       try {
         const structured = await structureOcrText("题目：2+2？ A. 3 B. 4", llm, secrets.llmApiKey);
-        await cacheCapabilities(settings.llm, secrets, undefined, structured.structuredOutputDetected);
-        results.push(`文本模型：正常（结构化输出${structured.structuredOutputDetected === "supported" ? "支持" : "已兼容降级"}）`);
+        if (!hasStructuredQuestionFields(structured)) {
+          results.push("文本模型：返回结构不完整（必须包含题干、选项和 ignoredText）");
+        } else {
+          await cacheCapabilities(settings.llm, secrets, undefined, structured.structuredOutputDetected);
+          results.push(`文本模型：正常（结构化输出${structured.structuredOutputDetected === "supported" ? "支持" : "已兼容降级"}）`);
+        }
       } catch (error) { results.push(`文本模型：失败（${messageOf(error)}）`); }
       if (settings.llm.vision === "unsupported") results.push("视觉模型：按设置禁用，将使用本地 OCR");
       else {
-        try { const vision = await recognizeWithVision(request.imageDataUrl, llm, secrets.llmApiKey); await cacheCapabilities(settings.llm, secrets, "supported", vision.structuredOutputDetected); results.push("视觉模型：正常"); }
+        try {
+          const vision = await recognizeWithVision(request.imageDataUrl, llm, secrets.llmApiKey);
+          if (!hasStructuredQuestionFields(vision)) results.push("视觉模型：返回结构不完整，将使用本地 OCR");
+          else { await cacheCapabilities(settings.llm, secrets, "supported", vision.structuredOutputDetected); results.push("视觉模型：正常"); }
+        }
         catch (error) {
           if (error instanceof LlmError && error.unsupportedVision) { await cacheCapabilities(settings.llm, secrets, "unsupported"); results.push("视觉模型：不支持，将使用本地 OCR"); }
           else results.push(`视觉模型：失败（${messageOf(error)}）`);
@@ -84,7 +92,7 @@ async function handle(request: Exclude<WorkerRequest, { type: "OCR" | "CROP_IMAG
   let question = request.question;
   let preview: RecognitionPreview | undefined;
   try {
-    if (!hasQuestionStructure(question) || question.warnings.includes("INCOMPLETE_OPTIONS") || question.warnings.includes("VISION_MODEL_REQUIRED")) {
+    if (requiresRecognitionFallback(question)) {
       if (!request.captureAuthorized) return { ok: false, code: "CAPTURE_REQUIRES_SHORTCUT", message: "这道题需要截图识别。请使用扩展框选快捷键重新选择题目，以授予当前页面的临时截图权限。", recoverable: true };
       const capabilities = currentCapabilities(settings.llm, secrets);
       const canUseVision = !!secrets.llmApiKey && settings.llm.vision !== "unsupported" && (settings.llm.vision === "supported" || capabilities.visionDetected !== "unsupported");
@@ -153,7 +161,7 @@ async function recognizeFallback(base: ExtractedQuestion, screenshot: string, de
       // A successful HTTP response is not enough: malformed or incomplete
       // vision JSON must continue through local OCR instead of silently
       // surfacing an unstructured question for JEV.
-      if (!hasQuestionStructure(visionQuestion)) throw new LlmError("视觉模型未提取出完整题目，将改用本地 OCR。", undefined, false, false);
+      if (!validateQuestion(visionQuestion).every((error) => error === "请确认题目是单选还是多选")) throw new LlmError("视觉模型未提取出完整题目，将改用本地 OCR。", undefined, false, false);
       return { question: visionQuestion, preview: { imageDataUrl: questionImage, width: cropped.width, height: cropped.height, boxes: [], excludedText: parsed.ignoredText?.trim() || undefined } };
     } catch (error) {
       if (signal.aborted) throw error;

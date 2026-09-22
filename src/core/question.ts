@@ -58,6 +58,24 @@ export function hasQuestionStructure(question: ExtractedQuestion): boolean {
   return validateQuestion(question).every((error) => error === "请确认题目是单选还是多选");
 }
 
+/**
+ * Returns true when the DOM result is not safe to send directly to JEV.
+ *
+ * A complete DOM question can still contain a formula or a visual element
+ * whose semantics are not represented by ordinary text.  Those cases must go
+ * through the visual/OCR review path (or be explicitly corrected by the user)
+ * instead of being treated as a plain-text question merely because it has two
+ * labelled options.
+ */
+export function requiresRecognitionFallback(question: ExtractedQuestion): boolean {
+  return !hasQuestionStructure(question) || question.warnings.some((warning) =>
+    warning === "INCOMPLETE_OPTIONS" ||
+    warning === "POSSIBLE_FORMULA" ||
+    warning === "POSSIBLE_DIAGRAM" ||
+    warning === "VISION_MODEL_REQUIRED"
+  );
+}
+
 export function hasQuestionTextConflict(reference: ExtractedQuestion, candidate: ExtractedQuestion): boolean {
   if (reference.source !== "dom" || reference.options.length < 2 || candidate.options.length < 2) return false;
   const referenceStem = comparableText(reference.stem), candidateStem = comparableText(candidate.stem);
