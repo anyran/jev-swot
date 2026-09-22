@@ -2,13 +2,24 @@ import { PaddleOcr } from "./ocr";
 import type { WorkerRequest } from "../shared/types";
 
 const engine = new PaddleOcr();
+const ocrControllers = new Map<string, AbortController>();
 chrome.runtime.onMessage.addListener((request: WorkerRequest, _sender, sendResponse) => {
+  if (request.type === "CANCEL_OCR") {
+    ocrControllers.get(request.requestId)?.abort();
+    sendResponse({ ok: true });
+    return false;
+  }
   if (request.type === "CROP_IMAGE") {
     void cropImage(request.imageDataUrl, request.rect, request.devicePixelRatio).then(sendResponse).catch((error: unknown) => sendResponse({ ok: false, message: error instanceof Error ? error.message : "截图裁切失败" }));
     return true;
   }
   if (request.type !== "OCR") return false;
-  void engine.recognize(request.imageDataUrl, request.rect, request.devicePixelRatio, request.useWebGpu).then((result) => sendResponse({ ok: true, ...result })).catch((error: unknown) => sendResponse({ ok: false, code: "OCR_FAILED", message: error instanceof Error ? error.message : "OCR 失败", recoverable: true }));
+  const controller = request.requestId ? new AbortController() : undefined;
+  if (request.requestId && controller) ocrControllers.set(request.requestId, controller);
+  void engine.recognize(request.imageDataUrl, request.rect, request.devicePixelRatio, request.useWebGpu, controller?.signal)
+    .then((result) => sendResponse({ ok: true, ...result }))
+    .catch((error: unknown) => sendResponse({ ok: false, code: controller?.signal.aborted ? "OCR_CANCELLED" : "OCR_FAILED", message: error instanceof Error ? error.message : "OCR 失败", recoverable: true }))
+    .finally(() => { if (request.requestId && ocrControllers.get(request.requestId) === controller) ocrControllers.delete(request.requestId); });
   return true;
 });
 

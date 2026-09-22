@@ -26,7 +26,7 @@ function visibleText(element: Element): string {
     if (!parent || parent.closest(EXCLUDED) || !visible(parent)) continue;
     const value = node.textContent?.trim(); if (value) pieces.push(value);
   }
-  return cleanText(pieces.join("\n"));
+  return cleanText(pieces.join("\n") || element.getAttribute("aria-label") || element.getAttribute("title") || "");
 }
 
 export function findQuestionContainer(start: Element): Element {
@@ -54,7 +54,7 @@ export function extractFromElement(element: Element): ExtractedQuestion {
     : [...element.querySelectorAll("li,label,[role=radio],[role=checkbox],[role=option],tr")].filter(isOptionNode);
   const dedup = [...new Set(optionElements)];
   const options: QuestionOption[] = dedup.map((node, index) => {
-    const raw = cleanText(visibleText(node) || node.getAttribute("aria-label") || "");
+    const raw = cleanText(visibleText(node) || node.getAttribute("aria-label") || node.getAttribute("title") || node.querySelector("input, [role=radio], [role=checkbox], [role=option]")?.getAttribute("aria-label") || "");
     const match = /^\s*([A-Ha-h]|[1-9]\d{0,2}|[①②③④⑤⑥⑦⑧⑨])(?:[.、)）:]|\s+)\s*(.*)$/.exec(raw);
     return { id: `option_${index + 1}`, label: match?.[1]?.toUpperCase() ?? String.fromCharCode(65 + index), text: match?.[2] || raw };
   }).filter((x) => x.text);

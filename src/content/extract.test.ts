@@ -40,6 +40,12 @@ describe("DOM extraction", () => {
     question.insertAdjacentHTML("afterbegin", '<img alt="三角形 ABC，底边为 4" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==">');
     expect(extractFromElement(question).context).toContain("三角形 ABC");
   });
+  it("uses ARIA labels when a question has no visible text nodes", () => {
+    document.body.innerHTML = '<section aria-label="Which number is even?"><div role="radio" aria-label="A. 3"></div><div role="radio" aria-label="B. 4"></div></section>';
+    const question = extractFromElement(document.querySelector("section")!);
+    expect(question.stem).toBe("Which number is even?");
+    expect(question.options.map((option) => option.text)).toEqual(["3", "4"]);
+  });
   it("extracts table rows and infers explicit multi-select wording", () => {
     document.body.innerHTML = `<section class="question"><h2>多选题：选择所有正确项</h2><table><tbody><tr><td>A.</td><td>甲</td></tr><tr><td>B.</td><td>乙</td></tr></tbody></table></section>`;
     const question = extractFromElement(document.querySelector(".question")!);

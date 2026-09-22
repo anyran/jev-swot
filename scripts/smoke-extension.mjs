@@ -14,17 +14,25 @@ try {
   browser = await puppeteer.launch({ executablePath, headless: true, userDataDir, enableExtensions: [extensionPath], args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-crash-reporter"] });
   const target = await browser.waitForTarget((item) => item.type() === "service_worker" && item.url().includes("assets/background.js"), { timeout: 15_000 });
   const extensionId = new URL(target.url()).host;
-  const workerSession = await target.createCDPSession(); let jevRequests = 0;
-  await workerSession.send("Fetch.enable", { patterns: [{ urlPattern: "https://api.typesafe.ai/*", requestStage: "Request" }] });
+  const workerSession = await target.createCDPSession(); let jevRequests = 0, llmRequests = 0, visionRequests = 0;
+  await workerSession.send("Fetch.enable", { patterns: [{ urlPattern: "https://api.typesafe.ai/*", requestStage: "Request" }, { urlPattern: "https://api.openai.com/*", requestStage: "Request" }] });
   workerSession.on("Fetch.requestPaused", (event) => {
-    if (!event.request.url.startsWith("https://api.typesafe.ai/")) return;
-    jevRequests++;
-    void workerSession.send("Fetch.fulfillRequest", {
-      requestId: event.requestId,
-      responseCode: 200,
-      responseHeaders: [{ name: "content-type", value: "application/json" }],
-      body: Buffer.from(JSON.stringify({ model: "jev-smoke", answers: { answer: { type: "choice", choice: "option_2", confidence: 0.92, probabilities: { option_1: 0.08, option_2: 0.92 } } } })).toString("base64")
-    });
+    if (event.request.url.startsWith("https://api.typesafe.ai/")) {
+      jevRequests++;
+      void workerSession.send("Fetch.fulfillRequest", {
+        requestId: event.requestId,
+        responseCode: 200,
+        responseHeaders: [{ name: "content-type", value: "application/json" }],
+        body: Buffer.from(JSON.stringify({ model: "jev-smoke", answers: { answer: { type: "choice", choice: "option_2", confidence: 0.92, probabilities: { option_1: 0.08, option_2: 0.92 } } } })).toString("base64")
+      });
+      return;
+    }
+    if (event.request.url.startsWith("https://api.openai.com/")) {
+      llmRequests++;
+      if (event.request.postData?.includes("image_url")) visionRequests++;
+      const structured = { questionType: "single", stem: "Which number is even?", context: "", visualDependency: false, visualDependencyReason: "", options: [{ label: "A", text: "3" }, { label: "B", text: "4" }] };
+      void workerSession.send("Fetch.fulfillRequest", { requestId: event.requestId, responseCode: 200, responseHeaders: [{ name: "content-type", value: "application/json" }], body: Buffer.from(JSON.stringify({ choices: [{ message: { content: JSON.stringify(structured) } }] })).toString("base64") });
+    }
   });
   console.log("Smoke: service worker ready");
   const page = await browser.newPage();
@@ -33,7 +41,8 @@ try {
   if (title !== "Jev 做题家设置 Jev SWOT") throw new Error(`Unexpected options title: ${title}`);
   const permissions = await page.evaluate(() => chrome.permissions.getAll());
   console.log(`Smoke: granted origins ${permissions.origins?.join(", ") ?? "none"}`);
-  await page.evaluate(() => chrome.storage.session.set({ secrets: { typeSafeApiKey: "smoke-only" } }));
+  await page.evaluate(() => chrome.storage.session.set({ secrets: { typeSafeApiKey: "smoke-only", llmApiKey: "smoke-llm" } }));
+  await page.evaluate(() => chrome.storage.local.set({ settings: { llm: { baseUrl: "https://api.openai.com/v1", model: "smoke-model", vision: "unsupported", structuredOutput: "unsupported" }, ocrThreshold: 0.5, useWebGpu: false, confirmVisionUpload: true, disabledHosts: [] } }));
   console.log("Smoke: options page ready; running packaged OCR");
   const ocr = await page.evaluate(async () => {
     if (!await chrome.offscreen.hasDocument()) await chrome.offscreen.createDocument({ url: "offscreen.html", reasons: [chrome.offscreen.Reason.BLOBS], justification: "Release smoke test for packaged local OCR" });
@@ -53,7 +62,16 @@ try {
   await new Promise((resolve, reject) => { const deadline = Date.now() + 5_000; const poll = () => jevRequests ? resolve() : Date.now() > deadline ? reject(new Error("Mock JEV request was not observed")) : setTimeout(poll, 50); poll(); });
   const answerChanged = await questionPage.$eval('input[type="radio"]', (input) => input.checked);
   if (answerChanged) throw new Error("Extension modified the page answer during smoke test");
-  console.log(`Chrome loaded Jev 做题家（Jev SWOT） ${extensionId}; service worker, content interaction, options page, and packaged OCR are healthy (${Math.round(ocr.confidence * 100)}%, ${ocr.backend}).`);
+  const fallback = await page.evaluate(async () => {
+    const canvas = document.createElement("canvas"); canvas.width = 900; canvas.height = 340;
+    const context = canvas.getContext("2d"); context.fillStyle = "white"; context.fillRect(0, 0, canvas.width, canvas.height); context.fillStyle = "black"; context.font = "42px Arial";
+    ["Which number is even?", "A. 3", "B. 4"].forEach((line, index) => context.fillText(line, 40, 75 + index * 90));
+    return chrome.runtime.sendMessage({ type: "ANALYZE", requestId: crypto.randomUUID(), question: { source: "dom", questionType: "unknown", stem: "", options: [], sourceRect: { x: 0, y: 0, width: canvas.width, height: canvas.height }, recognitionConfidence: 0.2, warnings: ["INCOMPLETE_OPTIONS"] }, screenshot: canvas.toDataURL("image/png"), devicePixelRatio: 1, captureAuthorized: true });
+  });
+  if (!fallback?.ok || !fallback.probability) throw new Error(`OCR fallback smoke returned an invalid response: ${JSON.stringify(fallback)}`);
+  if (llmRequests === 0 || jevRequests < 2) throw new Error(`OCR fallback smoke request chain was not observed (llm=${llmRequests}, vision=${visionRequests}, jev=${jevRequests})`);
+  if (visionRequests !== 0) throw new Error("Canvas OCR smoke unexpectedly uploaded an image to the vision model");
+  console.log(`Chrome loaded Jev 做题家（Jev SWOT） ${extensionId}; DOM→JEV and Canvas→local OCR→text model→JEV flows are healthy (${Math.round(ocr.confidence * 100)}%, ${ocr.backend}).`);
 } finally {
   await browser?.close();
   if (server) { server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); }

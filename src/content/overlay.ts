@@ -10,7 +10,6 @@ export class ResultOverlay {
   constructor(private retry: (q: ExtractedQuestion, visionConsent?: "allow" | "deny") => void, private explain: (q: ExtractedQuestion, p: ProbabilityResult) => void, private cancel: () => void) {
     this.host.dataset.jevSwotRoot = "true";
     this.root = this.host.attachShadow({ mode: "closed" });
-    document.documentElement.append(this.host);
   }
   loading(question: ExtractedQuestion) { this.question = question; this.probability = undefined; this.preview = undefined; this.progress("正在准备识别…"); }
   progress(message: string) { this.render(`<div class="status"><span class="spinner"></span>${escapeHtml(message)} <button data-action="cancel">取消</button></div>`); }

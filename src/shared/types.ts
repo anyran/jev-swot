@@ -51,7 +51,8 @@ export type WorkerRequest =
   | { type: "ANALYZE"; requestId: string; question: ExtractedQuestion; screenshot?: string; devicePixelRatio?: number; visionConsent?: "allow" | "deny"; captureAuthorized: boolean }
   | { type: "EXPLAIN"; requestId: string; question: ExtractedQuestion; probability: ProbabilityResult }
   | { type: "CANCEL"; requestId: string }
-  | { type: "OCR"; imageDataUrl: string; rect: DOMRectLike; devicePixelRatio: number; useWebGpu?: boolean }
+  | { type: "OCR"; requestId?: string; imageDataUrl: string; rect: DOMRectLike; devicePixelRatio: number; useWebGpu?: boolean }
+  | { type: "CANCEL_OCR"; requestId: string }
   | { type: "CROP_IMAGE"; imageDataUrl: string; rect: DOMRectLike; devicePixelRatio: number }
   | { type: "RELEASE_OCR" }
   | { type: "TEST_CONNECTIONS"; imageDataUrl: string }

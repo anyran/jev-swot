@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as ort from "onnxruntime-web/webgpu";
-import { decodeCtc, projectQuadPoint, unrotateBox } from "./ocr";
+import { decodeCtc, PaddleOcr, projectQuadPoint, unrotateBox } from "./ocr";
 
 describe("OCR perspective mapping", () => {
   it("maps destination corners onto a skewed source quadrilateral", () => {
@@ -40,5 +40,13 @@ describe("OCR rotation coordinates", () => {
     expect(box.y).toBe(150);
     expect(box.width).toBe(40);
     expect(box.height).toBe(30);
+  });
+});
+
+describe("OCR cancellation", () => {
+  it("stops before loading models when the request is already aborted", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(new PaddleOcr().recognize("data:image/png;base64,AA==", { x: 0, y: 0, width: 1, height: 1 }, 1, false, controller.signal)).rejects.toMatchObject({ name: "AbortError" });
   });
 });

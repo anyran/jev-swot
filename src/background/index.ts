@@ -14,7 +14,7 @@ chrome.action.onClicked.addListener(async (tab) => {
 });
 
 chrome.runtime.onMessage.addListener((request: WorkerRequest, sender, sendResponse) => {
-  if (request.type === "OCR" || request.type === "CROP_IMAGE") return false;
+  if (request.type === "OCR" || request.type === "CROP_IMAGE" || request.type === "CANCEL_OCR") return false;
   void handle(request, sender).then(sendResponse).catch((error: unknown) => sendResponse(failure(error)));
   return true;
 });
@@ -32,8 +32,13 @@ chrome.runtime.onConnect.addListener((port) => {
   });
 });
 
-async function handle(request: Exclude<WorkerRequest, { type: "OCR" | "CROP_IMAGE" }>, sender: chrome.runtime.MessageSender): Promise<WorkerResponse> {
-  if (request.type === "CANCEL") { activeRequests.get(request.requestId)?.abort(); activeRequests.delete(request.requestId); return { ok: true }; }
+async function handle(request: Exclude<WorkerRequest, { type: "OCR" | "CROP_IMAGE" | "CANCEL_OCR" }>, sender: chrome.runtime.MessageSender): Promise<WorkerResponse> {
+  if (request.type === "CANCEL") {
+    activeRequests.get(request.requestId)?.abort();
+    void chrome.runtime.sendMessage({ type: "CANCEL_OCR", requestId: request.requestId }).catch(() => undefined);
+    activeRequests.delete(request.requestId);
+    return { ok: true };
+  }
   if (request.type === "CLEAR_SESSION") { await chrome.storage.session.clear(); return { ok: true }; }
   if (request.type === "RELEASE_OCR") {
     if (await chrome.offscreen.hasDocument()) await chrome.offscreen.closeDocument();
@@ -47,13 +52,22 @@ async function handle(request: Exclude<WorkerRequest, { type: "OCR" | "CROP_IMAG
     const results: string[] = [];
     if (secrets.typeSafeApiKey) {
       const probe: ExtractedQuestion = { source: "user-edited", questionType: "single", stem: "2 + 2 等于多少？", options: [{ id: "option_1", label: "A", text: "3" }, { id: "option_2", label: "B", text: "4" }], sourceRect: { x: 0, y: 0, width: 1, height: 1 }, recognitionConfidence: 1, warnings: [] };
-      const answer = await askJev(probe, secrets.typeSafeApiKey); results.push(`JEV：正常（${answer.model}）`);
+      try { const answer = await askJev(probe, secrets.typeSafeApiKey); results.push(`JEV：正常（${answer.model}）`); }
+      catch (error) { results.push(`JEV：失败（${messageOf(error)}）`); }
     } else results.push("JEV：未配置密钥");
     if (secrets.llmApiKey) {
-      const structured = await structureOcrText("题目：2+2？ A. 3 B. 4", llm, secrets.llmApiKey); await cacheCapabilities(settings.llm, secrets, undefined, structured.structuredOutputDetected); results.push(`文本模型：正常（结构化输出${structured.structuredOutputDetected === "supported" ? "支持" : "已兼容降级"}）`);
-      if (settings.llm.vision !== "unsupported") {
+      try {
+        const structured = await structureOcrText("题目：2+2？ A. 3 B. 4", llm, secrets.llmApiKey);
+        await cacheCapabilities(settings.llm, secrets, undefined, structured.structuredOutputDetected);
+        results.push(`文本模型：正常（结构化输出${structured.structuredOutputDetected === "supported" ? "支持" : "已兼容降级"}）`);
+      } catch (error) { results.push(`文本模型：失败（${messageOf(error)}）`); }
+      if (settings.llm.vision === "unsupported") results.push("视觉模型：按设置禁用，将使用本地 OCR");
+      else {
         try { const vision = await recognizeWithVision(request.imageDataUrl, llm, secrets.llmApiKey); await cacheCapabilities(settings.llm, secrets, "supported", vision.structuredOutputDetected); results.push("视觉模型：正常"); }
-        catch (error) { if (error instanceof LlmError && error.unsupportedVision) { await cacheCapabilities(settings.llm, secrets, "unsupported"); results.push("视觉模型：不支持，将使用本地 OCR"); } else throw error; }
+        catch (error) {
+          if (error instanceof LlmError && error.unsupportedVision) { await cacheCapabilities(settings.llm, secrets, "unsupported"); results.push("视觉模型：不支持，将使用本地 OCR"); }
+          else results.push(`视觉模型：失败（${messageOf(error)}）`);
+        }
       }
     } else results.push("普通模型：未配置密钥");
     return { ok: true, diagnostic: results.join("；") };
@@ -73,13 +87,13 @@ async function handle(request: Exclude<WorkerRequest, { type: "OCR" | "CROP_IMAG
     if (validateQuestion(question).length || question.warnings.includes("VISION_MODEL_REQUIRED")) {
       if (!request.captureAuthorized) return { ok: false, code: "CAPTURE_REQUIRES_SHORTCUT", message: "这道题需要截图识别。请使用扩展框选快捷键重新选择题目，以授予当前页面的临时截图权限。", recoverable: true };
       const capabilities = currentCapabilities(settings.llm, secrets);
-      const canUseVision = !!secrets.llmApiKey && settings.llm.vision !== "unsupported" && capabilities.visionDetected !== "unsupported";
+      const canUseVision = !!secrets.llmApiKey && settings.llm.vision !== "unsupported" && (settings.llm.vision === "supported" || capabilities.visionDetected !== "unsupported");
       if (canUseVision && settings.confirmVisionUpload && !request.visionConsent) {
         return { ok: false, code: "VISION_CONSENT_REQUIRED", message: "DOM 无法完整提取这道题。是否允许将当前题目选区截图发送给你配置的视觉模型？", recoverable: true };
       }
       sendProgress(sender, request.requestId, "capture", "正在准备题目截图…");
       const screenshot = request.screenshot ?? await capture(sender.tab?.windowId);
-      const recognized = await recognizeFallback(question, screenshot, request.devicePixelRatio ?? 1, settings, secrets, controller.signal, request.visionConsent !== "deny", (stage, message) => sendProgress(sender, request.requestId, stage, message));
+      const recognized = await recognizeFallback(question, screenshot, request.devicePixelRatio ?? 1, settings, secrets, request.requestId, controller.signal, request.visionConsent !== "deny", (stage, message) => sendProgress(sender, request.requestId, stage, message));
       question = recognized.question; preview = recognized.preview;
     }
     const errors = validateQuestion(question);
@@ -96,18 +110,28 @@ async function handle(request: Exclude<WorkerRequest, { type: "OCR" | "CROP_IMAG
     if (!secrets.typeSafeApiKey) return { ok: false, code: "JEV_KEY_MISSING", message: "请先在设置页填写 TypeSafe API Key。", recoverable: true, question, preview };
     sendProgress(sender, request.requestId, "jev", "正在请求 JEV 概率…");
     return { ok: true, question, probability: await askJev(question, secrets.typeSafeApiKey, controller.signal), preview };
+  } catch (error) {
+    return {
+      ok: false,
+      code: controller.signal.aborted ? "CANCELLED" : error instanceof LlmError ? "MODEL_REQUEST_FAILED" : "ANALYSIS_FAILED",
+      message: controller.signal.aborted ? "已取消当前识别。" : messageOf(error),
+      recoverable: true,
+      question,
+      preview
+    };
   } finally { activeRequests.delete(request.requestId); }
 }
 
-async function recognizeFallback(base: ExtractedQuestion, screenshot: string, devicePixelRatio: number, settings: Awaited<ReturnType<typeof getSettings>>, secrets: Awaited<ReturnType<typeof getSecrets>>, signal: AbortSignal, allowVision: boolean, progress: (stage: "vision" | "ocr-loading" | "ocr-running", message: string) => void): Promise<{ question: ExtractedQuestion; preview?: RecognitionPreview }> {
+async function recognizeFallback(base: ExtractedQuestion, screenshot: string, devicePixelRatio: number, settings: Awaited<ReturnType<typeof getSettings>>, secrets: Awaited<ReturnType<typeof getSecrets>>, requestId: string, signal: AbortSignal, allowVision: boolean, progress: (stage: "vision" | "ocr-loading" | "ocr-running", message: string) => void): Promise<{ question: ExtractedQuestion; preview?: RecognitionPreview }> {
   await ensureOffscreen();
   const cropped = await chrome.runtime.sendMessage({ type: "CROP_IMAGE", imageDataUrl: screenshot, rect: base.sourceRect, devicePixelRatio });
   if (!cropped?.ok) throw new Error(cropped?.message ?? "截图裁切失败");
+  if (signal.aborted) throw new Error("识别请求已取消。");
   const questionImage = cropped.imageDataUrl as string;
   const capabilities = currentCapabilities(settings.llm, secrets);
   const llm = effectiveLlm(settings.llm, capabilities);
   let visionFallbackWarning: "VISION_SERVICE_UNAVAILABLE" | undefined;
-  if (allowVision && secrets.llmApiKey && settings.llm.vision !== "unsupported" && capabilities.visionDetected !== "unsupported") {
+  if (allowVision && secrets.llmApiKey && settings.llm.vision !== "unsupported" && (settings.llm.vision === "supported" || capabilities.visionDetected !== "unsupported")) {
     progress("vision", "正在调用视觉模型识别题目…");
     try {
       let parsed: import("../core/llm").StructuredQuestionResult;
@@ -118,6 +142,7 @@ async function recognizeFallback(base: ExtractedQuestion, screenshot: string, de
         parsed = await recognizeWithVision(questionImage, llm, secrets.llmApiKey, signal);
       }
       await cacheCapabilities(settings.llm, secrets, "supported", parsed.structuredOutputDetected);
+      if (signal.aborted) throw new Error("识别请求已取消。");
       return { question: normalizeParsed(parsed, base, "vision", 0.9), preview: { imageDataUrl: questionImage, width: cropped.width, height: cropped.height, boxes: [] } };
     } catch (error) {
       if (signal.aborted) throw error;
@@ -127,8 +152,9 @@ async function recognizeFallback(base: ExtractedQuestion, screenshot: string, de
   }
   progress("ocr-loading", "正在加载本地 PP-OCRv5 模型…");
   progress("ocr-running", "正在本地 OCR 识别文字…");
-  const ocr = await chrome.runtime.sendMessage({ type: "OCR", imageDataUrl: questionImage, rect: { x: 0, y: 0, width: cropped.width, height: cropped.height }, devicePixelRatio: 1, useWebGpu: settings.useWebGpu });
+  const ocr = await chrome.runtime.sendMessage({ type: "OCR", requestId, imageDataUrl: questionImage, rect: { x: 0, y: 0, width: cropped.width, height: cropped.height }, devicePixelRatio: 1, useWebGpu: settings.useWebGpu });
   if (!ocr?.ok) throw new Error(ocr?.message ?? "本地 OCR 失败");
+  if (signal.aborted) throw new Error("识别请求已取消。");
   let parsed = parseQuestionText(ocr.text, base.sourceRect);
   if (parsed.questionType === "unknown" && base.questionType !== "unknown") parsed.questionType = base.questionType;
   parsed.context = base.context;
@@ -200,6 +226,7 @@ async function ensureOffscreen(): Promise<void> {
 }
 let offscreenCreation: Promise<void> | undefined;
 function failure(error: unknown): WorkerResponse { return { ok: false, code: "UNEXPECTED", message: error instanceof Error ? error.message : "发生未知错误", recoverable: true }; }
+function messageOf(error: unknown): string { return (error instanceof Error ? error.message : "未知错误").replace(/[\r\n]+/g, " ").slice(0, 180); }
 function sendProgress(sender: chrome.runtime.MessageSender, requestId: string, stage: "capture" | "vision" | "ocr-loading" | "ocr-running" | "jev", message: string): void {
   if (sender.tab?.id == null) return;
   void chrome.tabs.sendMessage(sender.tab.id, { type: "ANALYZE_PROGRESS", requestId, stage, message }).catch(() => undefined);

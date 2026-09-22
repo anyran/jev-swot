@@ -23,34 +23,46 @@ export class PaddleOcr {
         ort.InferenceSession.create(chrome.runtime.getURL("models/ppocrv5-mobile-det.onnx"), { executionProviders }),
         ort.InferenceSession.create(chrome.runtime.getURL("models/ppocrv5-mobile-rec.onnx"), { executionProviders })
       ]);
-    } catch (error) { this.detector = undefined; throw new Error(`无法加载 PP-OCRv5：${error instanceof Error ? error.message : String(error)}`); }
+    } catch (error) { await this.releaseSessions(); throw new Error(`无法加载 PP-OCRv5：${error instanceof Error ? error.message : String(error)}`); }
   }
-  async recognize(dataUrl: string, rect: DOMRectLike, dpr: number, useWebGpu = false): Promise<OcrResult> {
+  async recognize(dataUrl: string, rect: DOMRectLike, dpr: number, useWebGpu = false, signal?: AbortSignal): Promise<OcrResult> {
+    throwIfAborted(signal);
     try { await this.initialize(useWebGpu); }
     catch (error) {
+      throwIfAborted(signal);
       if (!useWebGpu) throw error;
-      this.detector = undefined; this.recognizer = undefined;
+      await this.releaseSessions();
       await this.initialize(false);
     }
-    try { return await this.recognizeLoaded(dataUrl, rect, dpr); }
+    try { return await this.recognizeLoaded(dataUrl, rect, dpr, signal); }
     catch (error) {
+      if (signal?.aborted || isAbortError(error)) throw error;
       if (!useWebGpu || this.backend !== "webgpu") throw error;
-      await Promise.allSettled([this.detector?.release(), this.recognizer?.release()]); this.detector = undefined; this.recognizer = undefined; this.backend = "wasm";
+      await this.releaseSessions();
       await this.initialize(false);
-      return this.recognizeLoaded(dataUrl, rect, dpr);
+      return this.recognizeLoaded(dataUrl, rect, dpr, signal);
     }
   }
-  private async recognizeLoaded(dataUrl: string, rect: DOMRectLike, dpr: number): Promise<OcrResult> {
+  private async releaseSessions(): Promise<void> {
+    await Promise.allSettled([this.detector?.release(), this.recognizer?.release()]);
+    this.detector = undefined;
+    this.recognizer = undefined;
+    this.backend = "wasm";
+  }
+  private async recognizeLoaded(dataUrl: string, rect: DOMRectLike, dpr: number, signal?: AbortSignal): Promise<OcrResult> {
+    throwIfAborted(signal);
     const bitmap = await createImageBitmap(await (await fetch(dataUrl)).blob());
+    throwIfAborted(signal);
     const crop = cropBitmap(bitmap, rect, dpr);
     const candidates = [crop, enhanceGrayscale(crop), adaptiveThreshold(crop)];
     const attempts: OcrResult[] = [];
-    for (const candidate of candidates) attempts.push(await this.recognizeVariant(candidate));
+    for (const candidate of candidates) { throwIfAborted(signal); attempts.push(await this.recognizeVariant(candidate, 0, signal)); }
     let best = attempts.reduce((winner, attempt) => qualityScore(attempt) > qualityScore(winner) ? attempt : winner);
     if (best.confidence < 0.62 && crop.height > crop.width * 1.35) {
       const rotations = [rotateImage(crop, 90), rotateImage(crop, -90)];
       for (const [index, rotated] of rotations.entries()) {
-        const attempt = await this.recognizeVariant(rotated, index === 0 ? 90 : -90);
+        throwIfAborted(signal);
+        const attempt = await this.recognizeVariant(rotated, index === 0 ? 90 : -90, signal);
         if (qualityScore(attempt) > qualityScore(best)) best = attempt;
       }
     }
@@ -58,18 +70,22 @@ export class PaddleOcr {
     if (rotation) best = { ...best, boxes: best.boxes.map((box) => unrotateBox(box, crop.width, crop.height, rotation)), rotation: 0 };
     return best;
   }
-  private async recognizeVariant(crop: ImageData, rotation: 0 | 90 | -90 = 0): Promise<OcrResult> {
+  private async recognizeVariant(crop: ImageData, rotation: 0 | 90 | -90 = 0, signal?: AbortSignal): Promise<OcrResult> {
+    throwIfAborted(signal);
     const detImage = resizeForDetection(crop);
     const detTensor = imageTensor(detImage.data, detImage.width, detImage.height, "det");
     const detResult = await this.detector!.run({ [this.detector!.inputNames[0]]: detTensor });
+    throwIfAborted(signal);
     const output = detResult[this.detector!.outputNames[0]];
     const boxes = probabilityBoxes(output.data as Float32Array, output.dims, crop.width / detImage.width, crop.height / detImage.height).sort((a, b) => b.confidence - a.confidence).slice(0, 64);
     const results: Array<Box & { text: string }> = [];
     for (let offset = 0; offset < boxes.length; offset += 8) {
+      throwIfAborted(signal);
       const batchBoxes = boxes.slice(offset, offset + 8), lines = batchBoxes.map((box) => resizeForRecognition(perspectiveCrop(crop, box)));
       const width = Math.max(...lines.map((line) => line.width));
       const tensor = imageTensorBatch(lines.map((line) => padToWidth(line, width)), width, 48);
       const recResult = await this.recognizer!.run({ [this.recognizer!.inputNames[0]]: tensor });
+      throwIfAborted(signal);
       const outputTensor = recResult[this.recognizer!.outputNames[0]];
       batchBoxes.forEach((box, index) => { const decoded = decodeCtc(outputTensor, this.dictionary!, index); if (decoded.text) results.push({ ...box, text: decoded.text, confidence: box.confidence * decoded.confidence, lowConfidenceRatio: decoded.lowConfidenceRatio }); });
     }
@@ -220,3 +236,10 @@ export function decodeCtc(tensor: ort.Tensor, dict: string[], batchIndex = 0): {
   for(let t=0;t<steps;t++){let best=0,bestValue=-Infinity;for(let c=0;c<classes;c++){const value=data[base+t*classes+c];if(value>bestValue){bestValue=value;best=c;}}if(best!==0&&best!==previous){text+=dict[best]??"";score+=Math.max(0,Math.min(1,bestValue));count++;if(bestValue<0.5)low++;}previous=best;}
   return {text:text.trim(),confidence:count?score/count:0,lowConfidenceRatio:count?low/count:1};
 }
+function throwIfAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return;
+  const error = new Error("OCR 请求已取消。");
+  error.name = "AbortError";
+  throw error;
+}
+function isAbortError(error: unknown): boolean { return error instanceof Error && error.name === "AbortError"; }
