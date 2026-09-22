@@ -11,13 +11,14 @@
     "test:smoke": "node scripts/smoke-extension.mjs",
     "test:watch": "vitest",
     "check": "tsc -b --pretty false",
+    "check:scripts": "node --check scripts/capture-store-assets.mjs && node --check scripts/fetch-models.mjs && node --check scripts/generate-icons.mjs && node --check scripts/package-release.mjs && node --check scripts/smoke-extension.mjs && node --check scripts/verify-build.mjs && node --check scripts/verify-live.mjs && node --check scripts/verify-models.mjs",
     "assets:icons": "node scripts/generate-icons.mjs",
     "assets:store": "node scripts/capture-store-assets.mjs",
     "models:fetch": "node scripts/fetch-models.mjs",
     "verify:models": "node scripts/verify-models.mjs",
     "verify:live": "node scripts/verify-live.mjs",
     "verify:build": "node scripts/verify-build.mjs",
-    "release": "npm run check && npm test && npm run verify:models && npm run build && npm run verify:build && npm run test:smoke && node scripts/package-release.mjs"
+    "release": "npm run check && npm run check:scripts && npm test && npm run verify:models && npm run build && npm run verify:build && npm run test:smoke && node scripts/package-release.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "6.1.1",
