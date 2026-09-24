@@ -15,7 +15,7 @@
 - [x] Chrome 无 manifest、CSP 或 service worker 错误
 - [x] `release/jev-swot-0.1.0-build-20260924-ci-smoke-fix.zip` 包含模型、WASM、许可证、第三方声明和隐私说明；ZIP CRC 检查及与 `dist/` 文件清单比对通过，且不含 Synology `@eaDir` 索引。SHA-256：`62074dd00051406685292920d50a921aac599b425ae921dbfda350f6af37e43d`。旧的同版本归档均保留未覆盖。
 - [x] `JEV_STORE_ASSET_DIR=store-assets-20260923-v3 npm run assets:store` 生成 1280×800 的新版设置页与逐题概率结果截图；原有截图目录保留未覆盖。
-- [ ] GitHub Actions `Validate extension` 在目标提交上通过，并保留发布 ZIP 构建产物
+- [x] GitHub Actions [`Validate extension` 通过（提交 `3a8a56a`）](https://github.com/anyran/jev-swot/actions/runs/35941009588)，Linux、Windows、macOS 均成功；已保留三个 ZIP 构建产物至 2026-10-08：`jev-swot-release-ubuntu-latest-3a8a56a447ad54ff13cfba5512614871ae1cac97`、`jev-swot-release-windows-latest-3a8a56a447ad54ff13cfba5512614871ae1cac97`、`jev-swot-release-macos-latest-3a8a56a447ad54ff13cfba5512614871ae1cac97`
 
 ## 必须人工验证
 
