@@ -4,7 +4,7 @@
 
 - [x] `npm ci`（锁文件安装）
 - [x] 固定 revision 的模型资产通过 `npm run verify:models` SHA-256 校验
-- [x] `npm run release`（生产依赖审计、类型检查、完整单元测试、模型、构建、Chrome 冒烟及 ZIP；构建本身也会拒绝缺失或哈希错误的模型）。本次全链验证通过，并通过 `JEV_RELEASE_FILENAME=jev-swot-0.1.0-build-20260924-release.zip` 生成独立归档，排除了 Synology `@eaDir` 索引并保留旧包。
+- [x] `npm run release`（生产依赖审计、类型检查、完整单元测试、模型、构建、Chrome 冒烟及 ZIP；构建本身也会拒绝缺失或哈希错误的模型）。本次全链验证通过，并通过 `JEV_RELEASE_FILENAME=jev-swot-0.1.0-build-20260924-ci-smoke-fix.zip` 生成独立归档，排除了 Synology `@eaDir` 索引并保留旧包。
 - [x] 生产目录作为未打包扩展加载并实际运行 PP-OCRv5
 - [x] Chrome 冒烟覆盖整页 Alt+双击：确认前不发请求；整页扫描立即重触发会取消旧批次并等待页面与框架恢复后再启动新批次；实际滚动至约 12,000px 文档底部、`overflow:auto` 虚拟列表底部及 7,200px 跨源 iframe 底部，并扫描远端 DOM、延迟题、开放式 Shadow DOM、`srcdoc` 和跨源 HTTP 框架。断言八条独立结果（其中框架视觉题安全失败关闭）、六条文本 JEV 请求、框架视觉题不上传、主页面画布题在未触发浏览器级截图授权时显示逐题可恢复提示且不上传图片、框架与主页面滚动位置恢复，以及跨源框架扫描中取消后不再发送题目请求。另覆盖视觉模型直答→详情、视觉模型不支持→本地 OCR→普通文本结构化→JEV、无 JEV 时 OCR 原文→普通模型答案、流式解析、禁用站点、密钥持久化及清除。测试副本只在隔离临时目录中把可选 HTTP/HTTPS 主机权限提升为必需权限，模拟用户授予网页站点访问；不添加 `<all_urls>`，也不影响发布 manifest。正式 Chrome 中触发浏览器级 `activeTab` 并逐题重试的路径仍需人工验收。
 - [x] OCR 结构化失败或未配置普通模型时要求人工校正，不把规则猜测直接送入 JEV；模型排除文本不会进入 JEV 输入
@@ -13,7 +13,7 @@
 - [x] 结果详情可由用户显式触发普通模型直答；没有 JEV API Key 时 DOM 题自动直答、OCR 题整体直答并在详情中补做分离；不绕过视觉语义或人工校正门禁
 - [x] 默认结果覆盖层保持紧凑，仅显示答案提示；详情页才显示概率、校正和答案解析
 - [x] Chrome 无 manifest、CSP 或 service worker 错误
-- [x] `release/jev-swot-0.1.0-build-20260924-release.zip` 包含模型、WASM、许可证、第三方声明和隐私说明；ZIP CRC 检查及与 `dist/` 文件清单比对通过，且不含 Synology `@eaDir` 索引。SHA-256：`247c5442522ba220987947746183731df3db0d9ec3186bde6d26451cd7b09681`。旧的同版本归档均保留未覆盖。
+- [x] `release/jev-swot-0.1.0-build-20260924-ci-smoke-fix.zip` 包含模型、WASM、许可证、第三方声明和隐私说明；ZIP CRC 检查及与 `dist/` 文件清单比对通过，且不含 Synology `@eaDir` 索引。SHA-256：`62074dd00051406685292920d50a921aac599b425ae921dbfda350f6af37e43d`。旧的同版本归档均保留未覆盖。
 - [x] `JEV_STORE_ASSET_DIR=store-assets-20260923-v3 npm run assets:store` 生成 1280×800 的新版设置页与逐题概率结果截图；原有截图目录保留未覆盖。
 - [ ] GitHub Actions `Validate extension` 在目标提交上通过，并保留发布 ZIP 构建产物
 

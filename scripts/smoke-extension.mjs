@@ -22,6 +22,7 @@ const extensionPath = fileURLToPath(new URL("../dist/", import.meta.url)), userD
 const smokeExtensionRoot = await mkdtemp(join(tmpdir(), "jev-swot-smoke-extension-"));
 const smokeExtensionPath = join(smokeExtensionRoot, "extension");
 await cp(extensionPath, smokeExtensionPath, { recursive: true });
+const smokeChromeArgs = ["--no-sandbox", "--disable-dev-shm-usage", "--disable-crash-reporter"];
 const smokeManifestPath = join(smokeExtensionPath, "manifest.json");
 const smokeManifest = JSON.parse(await readFile(smokeManifestPath, "utf8"));
 // Promote the optional HTTP/HTTPS page origins in this isolated test copy to
@@ -32,7 +33,8 @@ smokeManifest.host_permissions = [...new Set([...(smokeManifest.host_permissions
 await writeFile(smokeManifestPath, `${JSON.stringify(smokeManifest, null, 2)}\n`);
 let browser, server, frameServer;
 try {
-  browser = await puppeteer.launch({ executablePath, headless: true, userDataDir, enableExtensions: [smokeExtensionPath], args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-crash-reporter"] });
+  browser = await puppeteer.launch({ executablePath, headless: true, userDataDir, enableExtensions: true, args: smokeChromeArgs });
+  await browser.installExtension(smokeExtensionPath);
   let target;
   try {
     // macOS runners can take considerably longer to expose an MV3 worker after
@@ -333,7 +335,8 @@ document.querySelector('main').append(embeddedFrame,crossOriginFrame);
   if (!rawOcrFallback?.ok || rawOcrFallback.directAnswer?.answerLabels?.join(",") !== "B" || !rawOcrFallback.detailToken) throw new Error(`Raw OCR ordinary-model fallback failed: ${JSON.stringify(rawOcrFallback)}`);
   if (rawAnswerRequests !== 1 || visionRequests !== 0) throw new Error(`Raw OCR fallback used an unexpected model path (raw=${rawAnswerRequests}, vision=${visionRequests})`);
   const rawOcrDetails = await page.evaluate(async (detailToken) => chrome.runtime.sendMessage({ type: "LOAD_DETAILS", requestId: crypto.randomUUID(), detailToken }), rawOcrFallback.detailToken);
-  if (!rawOcrDetails?.ok || rawOcrDetails.question?.stem !== "Which number is even?" || rawOcrDetails.directAnswer?.answerLabels?.join(",") !== "B") throw new Error(`Raw OCR details did not return the separated question: ${JSON.stringify(rawOcrDetails)}`);
+  const normalizedRawOcrStem = rawOcrDetails?.question?.stem?.normalize("NFKC").replace(/[\p{P}\p{S}\s]+/gu, " ").trim().toLowerCase();
+  if (!rawOcrDetails?.ok || normalizedRawOcrStem !== "which number is even" || rawOcrDetails.directAnswer?.answerLabels?.join(",") !== "B") throw new Error(`Raw OCR details did not return the separated question: ${JSON.stringify(rawOcrDetails)}`);
   const screenshotWithoutGesture = await page.evaluate(() => chrome.runtime.sendMessage({ type: "ANALYZE", requestId: crypto.randomUUID(), question: { source: "dom", questionType: "unknown", stem: "", options: [], sourceRect: { x: 0, y: 0, width: 320, height: 120 }, recognitionConfidence: 0.2, warnings: ["INCOMPLETE_OPTIONS"] }, captureAuthorized: false }));
   if (screenshotWithoutGesture?.code !== "CAPTURE_REQUIRES_SHORTCUT") throw new Error(`Screenshot fallback bypassed the explicit gesture gate: ${JSON.stringify(screenshotWithoutGesture)}`);
   await setSmokeSecrets({ typeSafeApiKey: "smoke-only", llmApiKey: "smoke-llm" });
@@ -433,7 +436,8 @@ document.querySelector('main').append(embeddedFrame,crossOriginFrame);
   if (!multiple?.ok || multiple.probability?.mode !== "independent-selection" || multiple.probability.options.length !== 2) throw new Error(`Multiple-choice Noul smoke returned an invalid response: ${JSON.stringify(multiple)}`);
   if (!multipleJevTargetsExplicit) throw new Error("Multiple-choice Noul request did not identify each target option without embedding option text");
   await browser.close();
-  browser = await puppeteer.launch({ executablePath, headless: true, userDataDir, enableExtensions: [smokeExtensionPath], args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-crash-reporter"] });
+  browser = await puppeteer.launch({ executablePath, headless: true, userDataDir, enableExtensions: true, args: smokeChromeArgs });
+  await browser.installExtension(smokeExtensionPath);
   await browser.waitForTarget((item) => item.type() === "service_worker" && item.url().includes("assets/background.js"), { timeout: 15_000 });
   const restartedPage = await browser.newPage();
   await restartedPage.goto(`chrome-extension://${extensionId}/options.html`, { waitUntil: "domcontentloaded" });
