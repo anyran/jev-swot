@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { createServer } from "node:http";
 
+const normalizeSmokeText = (value) => String(value ?? "").normalize("NFKC").replace(/[\p{P}\p{S}\s]+/gu, " ").trim().toLowerCase();
+const smokeHeadless = process.platform !== "darwin";
 const platformCandidates = process.platform === "darwin"
   ? ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/Applications/Chromium.app/Contents/MacOS/Chromium"]
   : process.platform === "win32"
@@ -33,7 +35,7 @@ smokeManifest.host_permissions = [...new Set([...(smokeManifest.host_permissions
 await writeFile(smokeManifestPath, `${JSON.stringify(smokeManifest, null, 2)}\n`);
 let browser, server, frameServer;
 try {
-  browser = await puppeteer.launch({ executablePath, headless: true, userDataDir, enableExtensions: true, args: smokeChromeArgs });
+  browser = await puppeteer.launch({ executablePath, headless: smokeHeadless, userDataDir, enableExtensions: true, args: smokeChromeArgs });
   await browser.installExtension(smokeExtensionPath);
   let target;
   try {
@@ -46,14 +48,13 @@ try {
     throw new Error(`Extension service worker did not start; observed targets: ${JSON.stringify(targets)}`, { cause: error });
   }
   const extensionId = new URL(target.url()).host;
-  const workerSession = await target.createCDPSession(); let jevRequests = 0, llmRequests = 0, visionRequests = 0, directAnswerRequests = 0, rawAnswerRequests = 0, forceVisionUnsupported = false, forceVisionMissingContext = false, forceStructuredMissingIgnored = false, jevInputWasClean = false, multipleJevTargetsExplicit = false; const jevQuestionStems = [];
+  const workerSession = await target.createCDPSession(); let jevRequests = 0, llmRequests = 0, visionRequests = 0, directAnswerRequests = 0, rawAnswerRequests = 0, forceVisionUnsupported = false, forceVisionMissingContext = false, forceStructuredMissingIgnored = false, multipleJevTargetsExplicit = false; const jevQuestionStems = [], jevRequestBodies = [];
   await workerSession.send("Fetch.enable", { patterns: [{ urlPattern: "https://api.typesafe.ai/*", requestStage: "Request" }, { urlPattern: "https://api.openai.com/*", requestStage: "Request" }] });
   workerSession.on("Fetch.requestPaused", (event) => {
     if (event.request.url.startsWith("https://api.typesafe.ai/") && event.request.url.endsWith("/v1/systemone")) {
       jevRequests++;
       const requestBody = event.request.postData ?? "";
-      if (requestBody.includes("Correct answer:") || requestBody.includes("Explanation:")) jevInputWasClean = false;
-      else if (requestBody.includes("Which number is even?")) jevInputWasClean = true;
+      jevRequestBodies.push(requestBody);
       let payload;
       try { payload = JSON.parse(requestBody); } catch { payload = undefined; }
       if (typeof payload?.state?.stem === "string") jevQuestionStems.push(payload.state.stem);
@@ -349,7 +350,9 @@ document.querySelector('main').append(embeddedFrame,crossOriginFrame);
   });
   if (!fallback?.ok || !fallback.probability) throw new Error(`OCR fallback smoke returned an invalid response: ${JSON.stringify(fallback)}`);
   if (!fallback.question?.warnings?.includes("VISION_MODEL_UNSUPPORTED")) throw new Error(`Configured non-vision model did not expose the local OCR fallback warning: ${JSON.stringify(fallback.question?.warnings)}`);
-  if (!jevInputWasClean) throw new Error("OCR structure model's excluded answer/explanation text reached the JEV request");
+  const fallbackJevInputs = jevRequestBodies.slice(jevRequestsBeforeFallback).map(normalizeSmokeText);
+  if (fallbackJevInputs.some((body) => body.includes("correct answer") || body.includes("explanation"))) throw new Error("OCR structure model's excluded answer/explanation text reached the JEV request");
+  if (!fallbackJevInputs.some((body) => body.includes("which number is even"))) throw new Error("OCR question stem was not preserved in the JEV request");
   if (llmRequests === 0 || jevRequests <= jevRequestsBeforeFallback) throw new Error(`OCR fallback smoke request chain was not observed (llm=${llmRequests}, vision=${visionRequests}, jev=${jevRequests}, before=${jevRequestsBeforeFallback})`);
   if (visionRequests !== 0) throw new Error("Canvas OCR smoke unexpectedly uploaded an image to the vision model");
   await setSmokeSecrets({ typeSafeApiKey: "smoke-only" });
@@ -436,7 +439,7 @@ document.querySelector('main').append(embeddedFrame,crossOriginFrame);
   if (!multiple?.ok || multiple.probability?.mode !== "independent-selection" || multiple.probability.options.length !== 2) throw new Error(`Multiple-choice Noul smoke returned an invalid response: ${JSON.stringify(multiple)}`);
   if (!multipleJevTargetsExplicit) throw new Error("Multiple-choice Noul request did not identify each target option without embedding option text");
   await browser.close();
-  browser = await puppeteer.launch({ executablePath, headless: true, userDataDir, enableExtensions: true, args: smokeChromeArgs });
+  browser = await puppeteer.launch({ executablePath, headless: smokeHeadless, userDataDir, enableExtensions: true, args: smokeChromeArgs });
   await browser.installExtension(smokeExtensionPath);
   await browser.waitForTarget((item) => item.type() === "service_worker" && item.url().includes("assets/background.js"), { timeout: 15_000 });
   const restartedPage = await browser.newPage();
