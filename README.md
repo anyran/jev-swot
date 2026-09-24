@@ -56,6 +56,10 @@ npm run release
 发布命令会执行生产依赖审计、类型检查、测试、模型哈希校验、图标生成、生产构建并生成
 `release/jev-swot-<version>.zip`。发布前还必须完成
 [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md) 中的真实 API 和跨平台人工验收。
+验收完成后，推送与 `package.json`、`public/manifest.json` 版本一致的 `v<version>` 标签
+（例如 `git tag v0.1.0 && git push origin v0.1.0`），GitHub Actions 会重新执行发布校验，
+并将 ZIP 附加到对应的 GitHub Release。Chrome Web Store 接收 ZIP 并负责生成供用户安装的
+CRX；本项目的发布包因此是 ZIP，不需要在 Actions 中自行签名生成 CRX。
 隐私数据流见 [`docs/PRIVACY.md`](docs/PRIVACY.md)。
 
 如果已经准备好真实凭据，可用以下命令做一次不落盘的线上预检。脚本不会保存或打印密钥；
