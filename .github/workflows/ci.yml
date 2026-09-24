@@ -40,14 +40,14 @@ jobs:
         uses: browser-actions/setup-chrome@v2
         with:
           chrome-version: stable
-          install-dependencies: true
+          install-dependencies: ${{ runner.os == 'Linux' }}
 
       - name: Fetch pinned OCR assets
         run: npm run models:fetch
 
       - name: Run release validation
         env:
-          CHROME_PATH: ${{ steps.setup-chrome.outputs.chrome-path }}
+          CHROME_PATH: ${{ runner.os == 'macOS' && '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' || steps.setup-chrome.outputs.chrome-path }}
         run: npm run release
 
       - name: Audit production dependencies
