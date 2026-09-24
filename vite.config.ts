@@ -2,6 +2,7 @@ import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import { resolve } from "node:path";
 import { copyFile } from "node:fs/promises";
+import { copyThirdPartyLicenses } from "./scripts/copy-third-party-licenses.mjs";
 
 export default defineConfig({
   plugins: [react(), {
@@ -10,7 +11,8 @@ export default defineConfig({
       await Promise.all([
         copyFile(resolve(import.meta.dirname, "LICENSE"), resolve(import.meta.dirname, "dist/LICENSE")),
         copyFile(resolve(import.meta.dirname, "THIRD_PARTY_NOTICES.md"), resolve(import.meta.dirname, "dist/THIRD_PARTY_NOTICES.md")),
-        copyFile(resolve(import.meta.dirname, "docs/PRIVACY.md"), resolve(import.meta.dirname, "dist/PRIVACY.md"))
+        copyFile(resolve(import.meta.dirname, "docs/PRIVACY.md"), resolve(import.meta.dirname, "dist/PRIVACY.md")),
+        copyThirdPartyLicenses()
       ]);
     }
   }],

@@ -1,13 +1,23 @@
-const TYPESAFE_URL = "https://api.typesafe.ai/v1/systemone";
+const DEFAULT_JEV_ENDPOINT = "https://api.typesafe.ai/v1/systemone";
+const DEFAULT_JEV_MODEL = "jev-latest";
+const OPENROUTER_JEV_ENDPOINT = "https://openrouter.ai/api/alpha/decisions";
+const OPENROUTER_JEV_MODEL = "typesafe/jev-1.13";
 const timeoutMs = 30_000;
 
-const typeSafeApiKey = process.env.JEV_TYPESAFE_API_KEY?.trim();
-if (!typeSafeApiKey) {
-  console.error("Missing JEV_TYPESAFE_API_KEY; live validation was not run.");
+const configuredJevApiKey = process.env.JEV_API_KEY?.trim() || process.env.JEV_TYPESAFE_API_KEY?.trim();
+const openRouterApiKey = process.env.OPENROUTER_API_KEY?.trim();
+const useOpenRouterDefaults = !configuredJevApiKey && !!openRouterApiKey;
+const jevApiKey = configuredJevApiKey || openRouterApiKey;
+const jevEndpoint = process.env.JEV_ENDPOINT?.trim() || (useOpenRouterDefaults ? OPENROUTER_JEV_ENDPOINT : DEFAULT_JEV_ENDPOINT);
+const jevModel = process.env.JEV_MODEL?.trim() || (useOpenRouterDefaults ? OPENROUTER_JEV_MODEL : DEFAULT_JEV_MODEL);
+if (!jevApiKey) {
+  console.error("Missing JEV_API_KEY, JEV_TYPESAFE_API_KEY, or OPENROUTER_API_KEY; live validation was not run.");
   process.exit(2);
 }
+const invalidJevEndpoint = validateJevEndpoint(jevEndpoint);
+if (invalidJevEndpoint) fail(invalidJevEndpoint);
 
-  const single = await requestJev(typeSafeApiKey, {
+const single = await requestJev(jevApiKey, {
   questionType: "single",
   stem: "2 + 2 等于多少？",
   options: [
@@ -15,14 +25,14 @@ if (!typeSafeApiKey) {
     { id: "option_2", label: "B", text: "4" }
   ]
 });
-if (single.answers?.answer?.type !== "choice") fail("TypeSafe single-choice response was not a Choice result.");
+if (single.answers?.answer?.type !== "choice") fail("JEV single-choice response was not a Choice result.");
 const singleProbabilities = [single.answers?.answer?.probabilities?.option_1, single.answers?.answer?.probabilities?.option_2].map(numberValue);
-if (singleProbabilities.some((value) => value == null)) fail("TypeSafe Choice response did not include both option probabilities.");
+if (singleProbabilities.some((value) => value == null)) fail("JEV Choice response did not include both option probabilities.");
 const singleTotal = singleProbabilities.reduce((sum, value) => sum + value, 0);
-if (singleTotal <= 0 || Math.abs(singleTotal - 1) > 0.05) fail(`TypeSafe Choice probabilities do not sum to approximately 1 (received ${singleTotal}).`);
+if (singleTotal <= 0 || Math.abs(singleTotal - 1) > 0.05) fail(`JEV Choice probabilities do not sum to approximately 1 (received ${singleTotal}).`);
 console.log(`JEV single Choice: ok (sum=${singleTotal.toFixed(4)})`);
 
-const multiple = await requestJev(typeSafeApiKey, {
+const multiple = await requestJev(jevApiKey, {
   questionType: "multiple",
   stem: "哪些数字是偶数？",
   options: [
@@ -32,7 +42,7 @@ const multiple = await requestJev(typeSafeApiKey, {
   ]
 });
 const multipleAnswers = [multiple.answers?.option_1, multiple.answers?.option_2, multiple.answers?.option_3];
-if (multipleAnswers.some((answer) => answer?.type !== "noul" || numberValue(answer.noul) == null)) fail("TypeSafe multiple-choice response did not include an independent Noul for every option.");
+if (multipleAnswers.some((answer) => answer?.type !== "noul" || numberValue(answer.noul) == null)) fail("JEV multiple-choice response did not include an independent Noul for every option.");
 console.log("JEV multiple Noul: ok (independent probabilities present for all options)");
 
 const llmValues = [process.env.JEV_LLM_BASE_URL, process.env.JEV_LLM_MODEL, process.env.JEV_LLM_API_KEY].map((value) => value?.trim());
@@ -97,8 +107,8 @@ async function requestJev(apiKey, question) {
       }
     }]))
     : { answer: { type: "choice", instructions: "选择最正确的一个答案。", criteria: Object.fromEntries(question.options.map((option) => [option.id, `${option.label}. ${option.text}`])) } };
-  const response = await fetchWithTimeout(TYPESAFE_URL, { method: "POST", headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: "jev-latest", state: { task: question.questionType === "multiple" ? "多项选择题" : "单项选择题", stem: question.stem, options: Object.fromEntries(question.options.map((option) => [option.id, `${option.label}. ${option.text}`])) }, questions }) });
-  return readJsonResponse("TypeSafe", response, apiKey);
+  const response = await fetchWithTimeout(jevEndpoint, { method: "POST", headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: jevModel, state: { task: question.questionType === "multiple" ? "多项选择题" : "单项选择题", stem: question.stem, options: Object.fromEntries(question.options.map((option) => [option.id, `${option.label}. ${option.text}`])) }, questions }) });
+  return readJsonResponse("JEV", response, apiKey);
 }
 
 async function requestLlm(baseUrl, model, apiKey, body, isVision = false) {
@@ -168,6 +178,15 @@ function validateBaseUrl(baseUrl) {
   if (url.protocol === "https:") return undefined;
   if (url.protocol === "http:" && new Set(["localhost", "127.0.0.1", "[::1]"]).has(url.hostname.toLowerCase())) return undefined;
   return "OpenAI-compatible Base URL must use HTTPS; HTTP is allowed only for localhost, 127.0.0.1, or [::1].";
+}
+function validateJevEndpoint(endpoint) {
+  let url;
+  try { url = new URL(String(endpoint).trim()); }
+  catch { return "JEV endpoint is not a valid URL."; }
+  if (url.username || url.password || url.search || url.hash) return "JEV endpoint must not contain credentials, query parameters, or a fragment.";
+  if (url.protocol === "https:") return undefined;
+  if (url.protocol === "http:" && new Set(["localhost", "127.0.0.1", "[::1]"]).has(url.hostname.toLowerCase())) return undefined;
+  return "JEV endpoint must use HTTPS; HTTP is allowed only for localhost, 127.0.0.1, or [::1].";
 }
 function safeDetail(value, apiKey) {
   return String(value).replaceAll(apiKey, "[redacted]").replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]").replace(/[\r\n]+/g, " ").slice(0, 160);

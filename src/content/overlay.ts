@@ -78,6 +78,11 @@ export class ResultOverlay {
     this.host.remove();
   }
   loading(question: ExtractedQuestion, captureAuthorized = false) { this.question = question; this.probability = undefined; this.directResult = undefined; this.preview = undefined; this.detailToken = undefined; this.diagnostic = undefined; this.detailsLoaded = false; this.captureAuthorized = captureAuthorized; this.expanded = false; this.progress("正在准备识别…"); }
+  showExisting(question: ExtractedQuestion, response: WorkerResponse, captureAuthorized = false) {
+    this.question = question;
+    this.captureAuthorized = captureAuthorized;
+    this.show(response);
+  }
   directLoading(question: ExtractedQuestion) { this.question = question; this.probability = undefined; this.directResult = undefined; this.preview = undefined; this.detailToken = undefined; this.diagnostic = undefined; this.detailsLoaded = true; this.expanded = false; this.progress("正在请求普通模型答题…"); }
   progress(message: string) { this.render(`<div class="status"><span class="spinner"></span>${escapeHtml(message)} <button data-action="cancel">取消</button></div>`); }
   show(response: WorkerResponse) {
@@ -169,7 +174,7 @@ export class ResultOverlay {
       : "";
     const palette = this.nearbyPalette();
     const paletteStyle = Object.entries(palette).map(([name, value]) => `--jev-${name}:${value}`).join(";");
-    this.root.innerHTML = `<style>${CSS_TEXT}</style><section class="${this.expanded ? "expanded" : "compact"}" style="left:${this.position.left}px;top:${this.position.top}px;${paletteStyle}"><header><b>Jev</b><small>Jev SWOT</small><span>${toggle}<button data-action="close">×</button></span></header><main>${content}</main></section>`;
+    this.root.innerHTML = `<style>${CSS_TEXT}</style><section class="${this.expanded ? "expanded" : "compact"}" style="left:${this.position.left}px;top:${this.position.top}px;${paletteStyle}"><header><b>做题 Jev</b><span>${toggle}<button data-action="close">×</button></span></header><main>${content}</main></section>`;
     this.root.querySelector('[data-action="close"]')?.addEventListener("click", () => this.dismiss());
     this.root.querySelector('[data-action="cancel"]')?.addEventListener("click", () => { this.cancel(); this.expanded = true; this.render(`<div class="warning">已取消当前请求。</div>${this.editor()}`); });
     this.root.querySelector('[data-action="toggle-details"]')?.addEventListener("click", () => {
@@ -223,8 +228,18 @@ export class ResultOverlay {
   private highlightOption(id: string) {
     const rect = this.question?.options.find((option) => option.id === id)?.sourceRect;
     if (!rect) return;
+    const documentSpace = this.question?.coordinateSpace === "document";
+    if (documentSpace && (rect.x + rect.width < window.scrollX || rect.x > window.scrollX + window.innerWidth || rect.y + rect.height < window.scrollY || rect.y > window.scrollY + window.innerHeight)) {
+      window.scrollTo({
+        left: Math.max(0, rect.x - (window.innerWidth - rect.width) / 2),
+        top: Math.max(0, rect.y - (window.innerHeight - rect.height) / 2),
+        behavior: "instant"
+      });
+    }
+    const x = documentSpace ? rect.x - window.scrollX : rect.x;
+    const y = documentSpace ? rect.y - window.scrollY : rect.y;
     const marker = document.createElement("div"); marker.dataset.jevSwotRoot = "highlight";
-    Object.assign(marker.style, { position: "fixed", zIndex: "2147483645", pointerEvents: "none", left: `${rect.x}px`, top: `${rect.y}px`, width: `${rect.width}px`, height: `${rect.height}px`, border: "2px solid #f59e0b", background: "#f59e0b22", borderRadius: "4px" });
+    Object.assign(marker.style, { position: "fixed", zIndex: "2147483645", pointerEvents: "none", left: `${x}px`, top: `${y}px`, width: `${rect.width}px`, height: `${rect.height}px`, border: "2px solid #f59e0b", background: "#f59e0b22", borderRadius: "4px" });
     document.documentElement.append(marker); setTimeout(() => marker.remove(), 1800);
   }
   private bindDragging() {
@@ -262,7 +277,7 @@ section{position:fixed;z-index:2147483647;left:12px;top:12px;width:220px;max-wid
 section.compact{width:max-content;min-width:0;border-radius:0;background:transparent;box-shadow:none;opacity:.62}
 section.compact:hover,section.compact:focus-within{opacity:.96}
 section.compact header{border-bottom:0;padding:4px 6px;gap:4px}
-section.compact header>b,section.compact header small{display:none}
+section.compact header>b{display:none}
 section.compact header button{font-size:11px;padding:1px 4px}
 section.compact main{padding:3px 8px 5px}
 section.expanded{width:360px;max-width:calc(100vw - 24px)}

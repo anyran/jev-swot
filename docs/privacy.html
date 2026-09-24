@@ -1,11 +1,20 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Jev SWOT（Jev 做题家）隐私政策</title><style>body{max-width:760px;margin:48px auto;padding:0 24px;font:16px/1.75 system-ui;color:#172033}h1,h2{line-height:1.25}a{color:#2563eb}</style></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>做题 Jev 隐私政策</title><style>body{max-width:760px;margin:48px auto;padding:0 24px;font:16px/1.75 system-ui;color:#172033}h1,h2{line-height:1.25}a{color:#2563eb}</style></head>
 <body>
-<h1>Jev SWOT（Jev 做题家）隐私政策</h1><p>最后更新：2026 年 9 月 22 日</p>
-<p>Jev SWOT（Jev 做题家）只在用户通过快捷键、扩展按钮或 Alt + 双击主动触发时处理当前题目，不出售数据、不投放广告，也不自动勾选或提交网页答案。主快捷键为 Ctrl/Command + Shift + Y；若与浏览器或其他扩展冲突，可在 chrome://extensions/shortcuts 设置备用的 Windows/Linux: Alt + Shift + Y；macOS: Command + Shift + U。结果默认以低干扰的透明文字提示显示，详情通过图标按钮按需打开。</p>
-<h2>处理的数据</h2><ul><li>扩展优先在设备内读取当前题目容器的可见 DOM 文本。</li><li>HTTP/HTTPS 网页访问是可选权限。用户显式启用后，Alt + 双击可以在已打开网页中持续监听；未启用时，扩展按钮和框选快捷键仍通过用户主动触发的临时权限工作。</li><li>DOM 不完整时，用户需要使用框选快捷键授予当前页面临时截图权限，扩展再截取框选区域；Alt + 双击仅处理能够从 DOM 完整读取的题目，不会绕过该截图权限。本地 PP-OCRv5 在设备上处理截图且不上传截图。</li><li>只有用户配置并实际启用视觉模型时，题目截图才会发送至该用户配置的 API；视觉模型先直接判断可能答案，用户点击详情后才再次请求题干、候选项和必要视觉上下文；默认每次上传前询问。</li><li>如果模型不支持视觉，本地 OCR 文字和文本框位置会先按视觉行分组。配置 JEV 时，普通文本模型返回题干、选项和排除行证据，扩展据此重建边界；题号、答案、解析、得分、对错标记和页面杂讯不会进入 JEV，也不会发送原始截图。未配置 JEV 时，OCR 原文会整体发送给普通模型判断，详情才进行题干/候选项分离。</li><li>TypeSafe Jev 接收用户确认后的题干、上下文和选项，以返回选项概率。</li><li>结构化题目点击“普通模型答题”时，普通模型收到已确认的题干、上下文和选项；视觉直答和未配置 JEV 的 OCR 直答返回可能答案、教学解释、知识点和不确定性。详情通过紧凑图标按需打开，不在页面持续显示大块弹窗。</li><li>只有用户点击“答案解析”后，结构化题目及 JEV 概率才会额外发送至用户配置的普通模型。</li></ul>
-<h2>存储与保留</h2><ul><li>模型地址、模型名、能力设置、TypeSafe API Key 和普通模型 API Key 保存在本机 <code>chrome.storage.local</code>，浏览器重启后仍会恢复，不会同步到云端。</li><li>OCR 阈值、WebGPU 开关、视觉上传确认和禁用站点列表也保存在 <code>chrome.storage.local</code>。</li><li>设置页的“清除本次会话”只清除当前会话缓存；“清除 API Key”会删除会话和本机保存的密钥。</li><li>扩展不持久保存网页正文、截图、OCR 内容、题目、答案或模型响应。</li></ul>
-<h2>第三方服务</h2><p>扩展会按用户操作调用 <a href="https://typesafe.ai/">TypeSafe API</a>，以及用户自行配置的 OpenAI 兼容 API。相应服务的数据处理受其各自政策约束。</p>
+<h1>做题 Jev 隐私政策</h1><p>最后更新：2026 年 9 月 23 日</p>
+<p>做题 Jev 只在用户通过快捷键、扩展按钮或 Alt + 双击主动触发时处理网页题目，不出售数据、不投放广告，也不自动勾选或提交网页答案。主快捷键为 Ctrl/Command + Shift + Y；若与浏览器或其他扩展冲突，可在 chrome://extensions/shortcuts 设置备用的 Windows/Linux: Alt + Shift + Y；macOS: Command + Shift + U。结果默认以低干扰的透明文字提示显示，详情通过图标按钮按需打开。</p>
+<h2>处理的数据</h2>
+<ul>
+<li>Alt + 双击会显示整页逐题面板；用户点击“开始整页分析”后，扩展逐屏扫描主网页及浏览器允许读取的 HTTP/HTTPS 嵌入框架，包括视口外和滚动后才加载的题目，并分别处理每道题。题目文本只在确认后发送，跨域框架文本也遵循此确认；扫描会滚动主页面、框架和内部滚动区，结束或取消后恢复位置。受浏览器限制或缺少站点访问权限的框架会显示未扫描提示。</li>
+<li>HTTP/HTTPS 网页访问是可选权限。用户显式启用后，Alt + 双击整页扫描可在已打开网页中持续使用；未启用时，扩展按钮和框选快捷键仍通过用户主动触发的临时权限工作。</li>
+<li>DOM 不完整时，扩展在本地逐屏拼接主网页题目截图。本地 PP-OCRv5 在设备上处理截图且不上传截图；只有视觉模型可用且用户逐题允许时，主网页题目截图才会发送至用户配置的 API。为避免子框架坐标错位，框架视觉题不会自动截图，会提示用户单独打开识别。用户选择“仅本地 OCR”时不会上传图片。Chrome 的 captureVisibleTab 需要 &lt;all_urls&gt; 或当前页 activeTab 权限；扩展不申请 &lt;all_urls&gt;，而由用户点击扩展图标或触发已注册的浏览器快捷键授予临时 activeTab 权限。若浏览器拒绝截图，结果面板会提示用户授权后逐题重试。</li>
+<li>如果模型不支持视觉，本地 OCR 文字和文本框位置会先按视觉行分组。配置 JEV 时，普通文本模型返回题干、选项和排除行证据，扩展据此重建边界；题号、答案、解析、得分、对错标记和页面杂讯不会进入 JEV，也不会发送原始截图。未配置 JEV 时，OCR 原文会整体发送给普通模型判断，详情才进行题干/候选项分离。</li>
+<li>用户配置的 JEV 决策 API（默认 TypeSafe，也可配置 OpenRouter 等兼容服务）接收用户确认后的题干、上下文和选项，以返回选项概率。首次使用自定义 API 域名时，设置页会在保存或测试连接时单独申请该域名的网络权限；拒绝权限后不会向该域名发送请求。</li>
+<li>结构化题目点击“普通模型答题”时，普通模型收到已确认的题干、上下文和选项；视觉直答和未配置 JEV 的 OCR 直答返回可能答案、教学解释、知识点和不确定性。详情通过紧凑图标按需打开，不在页面持续显示大块弹窗。</li>
+<li>只有用户点击“答案解析”后，结构化题目及 JEV 概率才会额外发送至用户配置的普通模型。</li>
+</ul>
+<h2>存储与保留</h2><ul><li>JEV 与普通模型的地址、模型名、能力设置和 API Key 保存在本机 <code>chrome.storage.local</code>，浏览器重启后仍会恢复，不会同步到云端。</li><li>OCR 阈值、WebGPU 开关、视觉上传确认和禁用站点列表也保存在 <code>chrome.storage.local</code>。</li><li>设置页的“清除本次会话”只清除当前会话缓存；“清除 API Key”会删除会话和本机保存的密钥。</li><li>扩展不持久保存网页正文、截图、OCR 内容、题目、答案或模型响应。</li></ul>
+<h2>第三方服务</h2><p>扩展会按用户操作调用用户配置的 JEV 决策 API（例如 <a href="https://typesafe.ai/">TypeSafe</a> 或 <a href="https://openrouter.ai/">OpenRouter</a>），以及用户自行配置的 OpenAI 兼容 API。相应服务的数据处理受其各自政策约束。</p>
 <h2>控制与联系</h2><p>用户可以禁用指定站点、清除 API Key、释放本地 OCR 内存，或卸载扩展。问题可通过 <a href="https://github.com/anyran/jev-swot/issues">GitHub Issues</a> 提交。</p>
 </body></html>

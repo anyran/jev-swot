@@ -18,7 +18,7 @@ if (shortcut?.suggested_key?.default !== "Ctrl+Shift+Y" || shortcut?.suggested_k
 const alternateShortcut = manifest.commands?.["select-question-alt"];
 if (alternateShortcut?.suggested_key?.default !== "Alt+Shift+Y" || alternateShortcut?.suggested_key?.mac !== "Command+Shift+U") throw new Error("dist manifest alternate shortcut defaults are out of date");
 if (!String(manifest.content_security_policy?.extension_pages ?? "").includes("wasm-unsafe-eval")) throw new Error("dist manifest CSP does not allow the bundled ONNX WASM runtime");
-for (const [locale, expectedName, expectedDescription] of [["zh_CN", "Jev 做题家", "Jev SWOT"], ["en", "Jev SWOT", "Jev SWOT"]]) {
+for (const [locale, expectedName, expectedDescription] of [["zh_CN", "做题 Jev", "在网页题目上显示校准概率"], ["en", "Jev SWOT", "Jev SWOT"]]) {
   const messages = JSON.parse(await readFile(new URL(`../dist/_locales/${locale}/messages.json`, import.meta.url), "utf8"));
   if (messages.extName?.message !== expectedName || !String(messages.extDescription?.message).includes(expectedDescription)) throw new Error(`dist ${locale} product naming is out of date`);
 }
@@ -27,8 +27,20 @@ const content = await readFile(contentPath, "utf8");
 if (/^\s*(?:import|export)(?:\s|[({"])/m.test(content)) throw new Error("Chrome content script contains ESM import/export and cannot execute as a classic manifest script");
 for (const size of [16, 32, 48, 128]) await readFile(new URL(`../dist/icons/icon-${size}.png`, import.meta.url));
 for (const document of ["LICENSE", "THIRD_PARTY_NOTICES.md", "PRIVACY.md"]) await readFile(new URL(`../dist/${document}`, import.meta.url));
+const licenseDirectory = new URL("../dist/third_party_licenses/", import.meta.url);
+const licenseManifest = JSON.parse(await readFile(new URL("manifest.json", licenseDirectory), "utf8"));
+const licenseAssets = new Set(await readdir(licenseDirectory));
+for (const required of ["onnxruntime-web", "onnxruntime-common", "flatbuffers", "guid-typescript", "long", "protobufjs", "react", "react-dom", "scheduler", "PaddleOCR PP-OCRv5 model assets", "ONNX Runtime upstream third-party components"]) {
+  if (!licenseManifest.some((entry) => entry.name === required || entry.name.startsWith(`${required}/`) || entry.name.startsWith(`${required} `))) throw new Error(`dist third-party license manifest is missing ${required}`);
+}
+for (const entry of licenseManifest) for (const filename of entry.licenseFiles ?? []) {
+  if (!licenseAssets.has(filename)) throw new Error(`dist third-party license file is missing: ${filename}`);
+  const body = await readFile(new URL(filename, licenseDirectory), "utf8");
+  if (!body.trim()) throw new Error(`dist third-party license file is empty: ${filename}`);
+}
+if (!licenseAssets.has("ONNXRuntime-ThirdPartyNotices.txt")) throw new Error("dist is missing the upstream ONNX Runtime third-party notices");
 const privacyPage = await readFile(new URL("../docs/privacy.html", import.meta.url), "utf8");
-if (!privacyPage.includes("普通模型答题") || !privacyPage.includes("不上传截图") || !privacyPage.includes("chrome.storage.local") || !privacyPage.includes("清除 API Key")) throw new Error("public privacy page is missing the persisted-configuration data-flow disclosure");
+if (!privacyPage.includes("普通模型答题") || !privacyPage.includes("不上传截图") || !privacyPage.includes("chrome.storage.local") || !privacyPage.includes("清除 API Key") || !privacyPage.includes("开始整页分析") || !privacyPage.includes("逐屏扫描主网页及浏览器允许读取的 HTTP/HTTPS 嵌入框架") || !privacyPage.includes("框架视觉题不会自动截图")) throw new Error("public privacy page is missing the page-and-frame scan or persisted-configuration data-flow disclosure");
 for (const model of ["ppocrv5-mobile-det.onnx", "ppocrv5-mobile-rec.onnx", "ppocrv5-dict.txt", "model-manifest.json"]) await readFile(new URL(`../dist/models/${model}`, import.meta.url));
 const modelManifest = JSON.parse(await readFile(new URL("../dist/models/model-manifest.json", import.meta.url), "utf8"));
 for (const [filename, metadata] of Object.entries(modelManifest.files ?? {})) {
@@ -42,4 +54,4 @@ for (const html of ["options.html", "offscreen.html"]) {
   const content = await readFile(new URL(`../dist/${html}`, import.meta.url), "utf8");
   if (/<script[^>]+src=["']https?:/i.test(content)) throw new Error(`${html} contains remotely hosted executable code`);
 }
-console.log("Verified MV3 manifest, optional page access registration, self-contained content script, bundled models/WASM, icon assets, and release legal documents.");
+console.log("Verified MV3 manifest, optional page access registration, self-contained content script, bundled models/WASM, icon assets, and bundled third-party license texts.");

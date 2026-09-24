@@ -3,9 +3,10 @@ import { LlmError, answerWithLlm, answerWithRawText, answerWithVision, directAns
 import { hasQuestionTextConflict, parseQuestionText, requiresRecognitionFallback, sanitizeDomQuestion, validateQuestion } from "../core/question";
 import { hasOcrBoundaryEvidence, hasStructuredQuestionFields, normalizeParsed } from "../core/recognition";
 import { getSecrets, getSettings, setSecrets } from "../shared/storage";
-import type { DirectAnswerResult, ExtractedQuestion, OcrTextBox, RecognitionPreview, WorkerRequest, WorkerResponse } from "../shared/types";
+import type { DirectAnswerResult, EmbeddedFrameScanResult, ExtractedQuestion, OcrTextBox, RecognitionPreview, WorkerRequest, WorkerResponse } from "../shared/types";
 
 const activeRequests = new Map<string, AbortController>();
+const activeFrameScans = new Map<string, { tabId: number; frameIds: Set<number>; cancelled: boolean }>();
 type PendingDetails = {
   kind: "vision" | "ocr";
   imageDataUrl: string;
@@ -41,9 +42,18 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName !== "local" || !changes.settings) return;
   void getSettings().then((settings) => chrome.tabs.query({}).then((tabs) => Promise.all(tabs
     .filter((tab): tab is chrome.tabs.Tab & { id: number } => tab.id != null)
-    .map((tab) => chrome.tabs.sendMessage(tab.id, { type: "SETTINGS_CHANGED", settings }).catch(() => undefined)))))
+    .map((tab) => notifyTabFrames(tab.id, settings)))))
     .catch(() => undefined);
 });
+
+async function notifyTabFrames(tabId: number, settings: Awaited<ReturnType<typeof getSettings>>) {
+  let frameIds = [0];
+  try {
+    const frames = await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, func: () => true });
+    frameIds = frames.map(({ frameId }) => frameId);
+  } catch { /* Restricted tabs still get the best-effort main-frame update. */ }
+  await Promise.all(frameIds.map((frameId) => chrome.tabs.sendMessage(tabId, { type: "SETTINGS_CHANGED", settings }, { frameId }).catch(() => undefined)));
+}
 
 chrome.commands.onCommand.addListener(async (command, tab) => {
   if ((command === "select-question" || command === "select-question-alt") && tab?.id) await startSelection(tab);
@@ -81,12 +91,30 @@ async function syncPersistentContentScript(): Promise<void> {
 async function registerPersistentContentScript(): Promise<void> {
   try {
     const registered = await chrome.scripting.getRegisteredContentScripts({ ids: [CONTENT_SCRIPT_ID] });
-    if (registered.length) return;
+    const supportsOriginFallback = Number(navigator.userAgent.match(/(?:Chrome|Chromium)\/(\d+)/)?.[1] ?? 0) >= 119;
+    const frameOptions = supportsOriginFallback ? { allFrames: true, matchOriginAsFallback: true } : { allFrames: true };
+    if (registered.length) {
+      // This script used to be registered for the main frame only. Upgrade an
+      // existing persistent registration in place so users who already granted
+      // optional page access also get frame scanning after the extension update.
+      if (registered[0].allFrames !== true || (supportsOriginFallback && registered[0].matchOriginAsFallback !== true)) {
+        await chrome.scripting.updateContentScripts([{
+          id: CONTENT_SCRIPT_ID,
+          matches: [...PAGE_ORIGINS],
+          js: ["assets/content.js"],
+          runAt: "document_idle",
+          persistAcrossSessions: true,
+          ...frameOptions
+        }]);
+      }
+      return;
+    }
     await chrome.scripting.registerContentScripts([{
       id: CONTENT_SCRIPT_ID,
       matches: [...PAGE_ORIGINS],
       js: ["assets/content.js"],
       runAt: "document_idle",
+      ...frameOptions,
       persistAcrossSessions: true
     }]);
   } catch {
@@ -112,7 +140,7 @@ chrome.runtime.onConnect.addListener((port) => {
     void (async () => {
       const settings = await getSettings(), secrets = await getSecrets();
       const host = port.sender?.tab?.url ? new URL(port.sender.tab.url).hostname : "";
-      if (hostDisabled(host, settings.disabledHosts)) { port.postMessage({ type: "error", message: "Jev 做题家已在此站点禁用。" }); return; }
+      if (hostDisabled(host, settings.disabledHosts)) { port.postMessage({ type: "error", message: "做题 Jev 已在此站点禁用。" }); return; }
       if (!secrets.llmApiKey) throw new Error("请先在设置页填写普通模型 API Key。");
       await streamExplanation(message.question, message.probability, settings.llm, secrets.llmApiKey, (chunk) => port.postMessage({ type: "chunk", chunk }), controller.signal);
       port.postMessage({ type: "done" });
@@ -121,6 +149,23 @@ chrome.runtime.onConnect.addListener((port) => {
 });
 
 async function handle(request: Exclude<WorkerRequest, { type: "OCR" | "CROP_IMAGE" | "CANCEL_OCR" }>, sender: chrome.runtime.MessageSender): Promise<WorkerResponse> {
+  if (request.type === "START_TOP_PAGE_SCAN") {
+    if (sender.tab?.id == null) return { ok: false, code: "FRAME_SCAN_UNAVAILABLE", message: "无法确认当前网页标签页。", recoverable: true };
+    if (sender.frameId !== 0) {
+      try { await chrome.tabs.sendMessage(sender.tab.id, { type: "START_PAGE_SCAN" }, { frameId: 0 }); }
+      catch { return { ok: false, code: "FRAME_SCAN_UNAVAILABLE", message: "无法在主网页中启动整页扫描。", recoverable: true }; }
+    }
+    return { ok: true };
+  }
+  if (request.type === "CANCEL_EMBEDDED_FRAME_SCAN") {
+    const scan = activeFrameScans.get(request.requestId);
+    if (scan) {
+      scan.cancelled = true;
+      await Promise.all([...scan.frameIds].map((frameId) => chrome.tabs.sendMessage(scan.tabId, { type: "CANCEL_EMBEDDED_FRAME", requestId: request.requestId }, { frameId }).catch(() => undefined)));
+      activeFrameScans.delete(request.requestId);
+    }
+    return { ok: true };
+  }
   if (request.type === "CANCEL") {
     activeRequests.get(request.requestId)?.abort();
     void chrome.runtime.sendMessage({ type: "CANCEL_OCR", requestId: request.requestId }).catch(() => undefined);
@@ -134,15 +179,90 @@ async function handle(request: Exclude<WorkerRequest, { type: "OCR" | "CROP_IMAG
     return { ok: true };
   }
   if (request.type === "GET_SETTINGS") return { ok: true, settings: await getSettings() };
+  if (request.type === "SCAN_EMBEDDED_FRAMES") {
+    const tabId = sender.tab?.id;
+    if (tabId == null || sender.frameId !== 0) return { ok: false, code: "FRAME_SCAN_UNAVAILABLE", message: "只能从当前网页主框架启动嵌入内容扫描。", recoverable: true };
+    const scan = { tabId, frameIds: new Set<number>(), cancelled: false };
+    activeFrameScans.set(request.requestId, scan);
+    try {
+      const settings = await getSettings();
+      const pageHost = sender.tab?.url ? safeHostname(sender.tab.url) : "";
+      if (hostDisabled(pageHost, settings.disabledHosts)) return { ok: false, code: "SITE_DISABLED", message: "做题 Jev 已在此站点禁用。", recoverable: true };
+      const injected = await chrome.scripting.executeScript({
+        target: { tabId, allFrames: true },
+        func: (): { url: string; childFrameCount: number } => ({ url: location.href, childFrameCount: document.querySelectorAll("iframe,frame").length })
+      });
+      const frameTargets = injected.filter(({ frameId }) => frameId !== 0).map(({ frameId, result }) => ({
+        frameId,
+        url: result?.url,
+        childFrameCount: result?.childFrameCount
+      }));
+      for (const { frameId } of frameTargets) scan.frameIds.add(frameId);
+      if (scan.cancelled) {
+        await Promise.all([...scan.frameIds].map((frameId) => chrome.tabs.sendMessage(tabId, { type: "CANCEL_EMBEDDED_FRAME", requestId: request.requestId }, { frameId }).catch(() => undefined)));
+        return { ok: true, frames: [] };
+      }
+      const frames: EmbeddedFrameScanResult[] = await Promise.all(frameTargets.map(async ({ frameId, url }) => {
+        try {
+          try { await chrome.tabs.sendMessage(tabId, { type: "PING" }, { frameId }); }
+          catch {
+            // A newly granted permission does not retroactively inject into an
+            // already open subframe. Inject only missing frame instances.
+            await chrome.scripting.executeScript({ target: { tabId, frameIds: [frameId] }, files: ["assets/content.js"] });
+          }
+          const response = await chrome.tabs.sendMessage(tabId, { type: "SCAN_EMBEDDED_FRAME", requestId: request.requestId }, { frameId }) as {
+            ok?: boolean; questions?: ExtractedQuestion[]; warning?: string; message?: string;
+          };
+          return { frameId, url, ok: response?.ok === true, questions: response?.questions, warning: response?.warning, message: response?.message };
+        } catch (error) {
+          return { frameId, url, ok: false, message: `该框架暂不可读取（${messageOf(error)}）。` };
+        }
+      }));
+      if (scan.cancelled) return { ok: true, frames: [] };
+      const expectedFrames = injected.reduce((total, { result }) => total + (result?.childFrameCount ?? 0), 0);
+      if (expectedFrames > frameTargets.length) {
+        frames.push({ frameId: -1, ok: false, message: "部分嵌套框架未能注入扫描脚本；其题目可能未纳入结果。" });
+      }
+      return { ok: true, frames };
+    } catch (error) {
+      return { ok: false, code: "FRAME_SCAN_UNAVAILABLE", message: `浏览器未允许检查嵌入框架（${messageOf(error)}）。`, recoverable: true };
+    } finally {
+      if (activeFrameScans.get(request.requestId) === scan) activeFrameScans.delete(request.requestId);
+    }
+  }
   const settings = await getSettings();
   const secrets = await getSecrets();
+  if (request.type === "CAPTURE_VISIBLE_TAB") {
+    const tab = sender.tab;
+    if (tab?.id == null || tab.windowId == null || !tab.url) return { ok: false, code: "PAGE_CAPTURE_UNAVAILABLE", message: "无法确认当前网页标签页，未截取页面。", recoverable: true };
+    let origin: string;
+    try {
+      const pageUrl = new URL(tab.url);
+      if (pageUrl.protocol !== "http:" && pageUrl.protocol !== "https:") throw new Error("unsupported scheme");
+      origin = `${pageUrl.origin}/*`;
+    } catch {
+      return { ok: false, code: "PAGE_CAPTURE_UNAVAILABLE", message: "此浏览器页面不支持整页识别。", recoverable: true };
+    }
+    if (hostDisabled(new URL(tab.url).hostname, settings.disabledHosts)) return { ok: false, code: "SITE_DISABLED", message: "做题 Jev 已在此站点禁用。", recoverable: true };
+    if (!(await chrome.permissions.contains({ origins: [origin] }))) return { ok: false, code: "PAGE_ACCESS_REQUIRED", message: "整页截图需要先在设置页授予此网页的访问权限。", recoverable: true };
+    const activeTabs = await chrome.tabs.query({ active: true, windowId: tab.windowId });
+    if (activeTabs[0]?.id !== tab.id) return { ok: false, code: "PAGE_NOT_ACTIVE", message: "请保持当前网页标签页处于前台后重试。", recoverable: true };
+    try { return { ok: true, imageDataUrl: await capture(tab.windowId) }; }
+    catch (error) {
+      const reason = messageOf(error);
+      const message = /<all_urls>|activeTab/i.test(reason)
+        ? "浏览器截图还需要当前页的临时扩展权限。请点击扩展图标或触发已注册的浏览器快捷键，再重试这道题。"
+        : `浏览器拒绝截取当前网页（${reason}）；请确认网页访问权限已启用后重试。`;
+      return { ok: false, code: "PAGE_CAPTURE_UNAVAILABLE", message, recoverable: true };
+    }
+  }
   if (request.type === "TEST_CONNECTIONS") {
     const capabilities = currentCapabilities(settings.llm, secrets);
     const llm = effectiveLlm(settings.llm, capabilities);
     const results: string[] = [];
     if (secrets.typeSafeApiKey) {
       const probe: ExtractedQuestion = { source: "user-edited", questionType: "single", stem: "2 + 2 等于多少？", options: [{ id: "option_1", label: "A", text: "3" }, { id: "option_2", label: "B", text: "4" }], sourceRect: { x: 0, y: 0, width: 1, height: 1 }, recognitionConfidence: 1, warnings: [] };
-      try { const answer = await askJev(probe, secrets.typeSafeApiKey); results.push(`JEV：正常（${answer.model}）`); }
+      try { const answer = await askJev(probe, secrets.typeSafeApiKey, undefined, settings.jev); results.push(`JEV：正常（${answer.model}）`); }
       catch (error) { results.push(`JEV：失败（${messageOf(error)}）`); }
     } else results.push("JEV：未配置密钥");
     if (secrets.llmApiKey) {
@@ -172,7 +292,7 @@ async function handle(request: Exclude<WorkerRequest, { type: "OCR" | "CROP_IMAG
   }
   if (request.type === "LOAD_DETAILS") {
     const host = sender.tab?.url ? new URL(sender.tab.url).hostname : "";
-    if (hostDisabled(host, settings.disabledHosts)) return { ok: false, code: "SITE_DISABLED", message: "Jev 做题家已在此站点禁用。", recoverable: true };
+    if (hostDisabled(host, settings.disabledHosts)) return { ok: false, code: "SITE_DISABLED", message: "做题 Jev 已在此站点禁用。", recoverable: true };
     const pending = pendingDetails.get(request.detailToken);
     if (!pending || pending.expiresAt < Date.now()) {
       pendingDetails.delete(request.detailToken);
@@ -209,14 +329,14 @@ async function handle(request: Exclude<WorkerRequest, { type: "OCR" | "CROP_IMAG
   }
   if (request.type === "EXPLAIN") {
     const host = sender.tab?.url ? new URL(sender.tab.url).hostname : "";
-    if (hostDisabled(host, settings.disabledHosts)) return { ok: false, code: "SITE_DISABLED", message: "Jev 做题家已在此站点禁用。", recoverable: true };
+    if (hostDisabled(host, settings.disabledHosts)) return { ok: false, code: "SITE_DISABLED", message: "做题 Jev 已在此站点禁用。", recoverable: true };
     if (!secrets.llmApiKey) return { ok: false, code: "LLM_KEY_MISSING", message: "请先在设置页填写普通模型 API Key。", recoverable: true };
     return { ok: true, explanation: await explainAnswer(request.question, request.probability, settings.llm, secrets.llmApiKey) };
   }
   if (request.type === "DIRECT_ANSWER") {
     const host = sender.tab?.url ? new URL(sender.tab.url).hostname : "";
     if (hostDisabled(host, settings.disabledHosts)) {
-      return { ok: false, code: "SITE_DISABLED", message: "Jev 做题家已在此站点禁用。", recoverable: true };
+      return { ok: false, code: "SITE_DISABLED", message: "做题 Jev 已在此站点禁用。", recoverable: true };
     }
     if (!secrets.llmApiKey) return { ok: false, code: "LLM_KEY_MISSING", message: "请先在设置页填写普通模型 API Key。", recoverable: true, question: request.question };
     const errors = validateQuestion(request.question);
@@ -234,24 +354,24 @@ async function handle(request: Exclude<WorkerRequest, { type: "OCR" | "CROP_IMAG
   }
   const host = sender.tab?.url ? new URL(sender.tab.url).hostname : "";
   if (hostDisabled(host, settings.disabledHosts)) {
-    return { ok: false, code: "SITE_DISABLED", message: "Jev 做题家已在此站点禁用。", recoverable: true };
+    return { ok: false, code: "SITE_DISABLED", message: "做题 Jev 已在此站点禁用。", recoverable: true };
   }
   const controller = new AbortController(); activeRequests.set(request.requestId, controller);
   let question = sanitizeDomQuestion(request.question);
   let preview: RecognitionPreview | undefined;
   try {
     if (requiresRecognitionFallback(question)) {
-      if (!request.captureAuthorized) return { ok: false, code: "CAPTURE_REQUIRES_SHORTCUT", message: "这道题需要截图识别。请使用扩展框选快捷键重新选择题目，以授予当前页面的临时截图权限。", recoverable: true };
+      if (!request.captureAuthorized) return { ok: false, code: "CAPTURE_REQUIRES_SHORTCUT", message: "这道题需要截图识别。请使用 Alt + 双击整页识别，或使用框选快捷键选择题目。", recoverable: true };
       const capabilities = currentCapabilities(settings.llm, secrets);
       const canUseVision = !!secrets.llmApiKey && settings.llm.vision !== "unsupported" && (settings.llm.vision === "supported" || capabilities.visionDetected !== "unsupported");
       if (canUseVision && settings.confirmVisionUpload && !request.visionConsent) {
-        return { ok: false, code: "VISION_CONSENT_REQUIRED", message: "DOM 无法完整提取这道题。是否允许将当前题目选区截图发送给你配置的视觉模型？", recoverable: true };
+        return { ok: false, code: "VISION_CONSENT_REQUIRED", message: "DOM 无法完整提取这道题。是否允许将这道题的截图发送给你配置的视觉模型？", recoverable: true };
       }
       sendProgress(sender, request.requestId, "capture", "正在准备题目截图…");
       let screenshot: string;
       try { screenshot = request.screenshot ?? await capture(sender.tab?.windowId); }
-      catch (error) { throw new CaptureError("无法从当前页面读取截图。请使用 Ctrl/Command + Shift + Y 框选题目后重试。", error); }
-      const recognized = await recognizeFallback(question, screenshot, request.devicePixelRatio ?? 1, settings, secrets, request.requestId, controller.signal, request.visionConsent !== "deny", (stage, message) => sendProgress(sender, request.requestId, stage, message));
+      catch (error) { throw new CaptureError("无法从当前页面读取截图。请确认当前网页权限已启用，或重新使用框选快捷键选择题目。", error); }
+      const recognized = await recognizeFallback(question, screenshot, request.devicePixelRatio ?? 1, settings, secrets, request.requestId, controller.signal, request.visionConsent !== "deny", (stage, message) => sendProgress(sender, request.requestId, stage, message), request.screenshotRect);
       question = recognized.question; preview = recognized.preview;
       if (recognized.directAnswer) {
         return { ok: true, directAnswer: recognized.directAnswer, detailToken: recognized.detailToken, diagnostic: recognized.diagnostic };
@@ -281,7 +401,7 @@ async function handle(request: Exclude<WorkerRequest, { type: "OCR" | "CROP_IMAG
       }
     }
     sendProgress(sender, request.requestId, "jev", "正在请求 JEV 概率…");
-    return { ok: true, question, probability: await askJev(question, secrets.typeSafeApiKey, controller.signal), preview };
+    return { ok: true, question, probability: await askJev(question, secrets.typeSafeApiKey, controller.signal, settings.jev), preview };
   } catch (error) {
     return {
       ok: false,
@@ -294,9 +414,9 @@ async function handle(request: Exclude<WorkerRequest, { type: "OCR" | "CROP_IMAG
   } finally { activeRequests.delete(request.requestId); }
 }
 
-async function recognizeFallback(base: ExtractedQuestion, screenshot: string, devicePixelRatio: number, settings: Awaited<ReturnType<typeof getSettings>>, secrets: Awaited<ReturnType<typeof getSecrets>>, requestId: string, signal: AbortSignal, allowVision: boolean, progress: (stage: "vision" | "ocr-loading" | "ocr-running", message: string) => void): Promise<{ question: ExtractedQuestion; preview?: RecognitionPreview; directAnswer?: DirectAnswerResult; detailToken?: string; diagnostic?: string }> {
+async function recognizeFallback(base: ExtractedQuestion, screenshot: string, devicePixelRatio: number, settings: Awaited<ReturnType<typeof getSettings>>, secrets: Awaited<ReturnType<typeof getSecrets>>, requestId: string, signal: AbortSignal, allowVision: boolean, progress: (stage: "vision" | "ocr-loading" | "ocr-running", message: string) => void, screenshotRect?: ExtractedQuestion["sourceRect"]): Promise<{ question: ExtractedQuestion; preview?: RecognitionPreview; directAnswer?: DirectAnswerResult; detailToken?: string; diagnostic?: string }> {
   await ensureOffscreen();
-  const cropped = await chrome.runtime.sendMessage({ type: "CROP_IMAGE", imageDataUrl: screenshot, rect: base.sourceRect, devicePixelRatio });
+  const cropped = await chrome.runtime.sendMessage({ type: "CROP_IMAGE", imageDataUrl: screenshot, rect: screenshotRect ?? base.sourceRect, devicePixelRatio });
   if (!cropped?.ok) throw new Error(cropped?.message ?? "截图裁切失败");
   if (signal.aborted) throw new Error("识别请求已取消。");
   const questionImage = cropped.imageDataUrl as string;
@@ -454,6 +574,10 @@ function effectiveLlm(settings: import("../shared/types").LLMSettings, secrets: 
 function capabilityKey(settings: import("../shared/types").LLMSettings): string { return `${settings.baseUrl.trim().replace(/\/$/, "")}|${settings.model.trim()}`; }
 function hostDisabled(host: string, disabledHosts: string[]): boolean {
   return !!host && disabledHosts.some((entry) => host === entry || host.endsWith(`.${entry}`));
+}
+function safeHostname(value: string): string {
+  try { return new URL(value).hostname; }
+  catch { return ""; }
 }
 function currentCapabilities(settings: import("../shared/types").LLMSettings, secrets: Awaited<ReturnType<typeof getSecrets>>) {
   return secrets.capabilityKey === capabilityKey(settings) ? secrets : { ...secrets, visionDetected: undefined, structuredOutputDetected: undefined };

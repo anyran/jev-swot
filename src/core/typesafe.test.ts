@@ -12,6 +12,44 @@ describe("JEV request mapping", () => {
     const request = JSON.parse((vi.mocked(fetch).mock.calls[0][1] as RequestInit).body as string);
     expect(request.questions.answer.type).toBe("choice");
   });
+  it("uses a configured OpenRouter-compatible endpoint, model ID, and API key", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ model: "typesafe/jev-1.13", answers: { answer: { type: "choice", probabilities: { option_1: .1, option_2: .9 } } } }), { status: 200 })));
+    const endpoint = "https://openrouter.ai/api/alpha/decisions";
+    const result = await askJev(base, "openrouter-secret", undefined, { endpoint, model: "typesafe/jev-1.13" });
+    const [url, init] = vi.mocked(fetch).mock.calls[0];
+    const request = JSON.parse((init as RequestInit).body as string);
+    expect(url).toBe(endpoint);
+    expect((init as RequestInit).headers).toMatchObject({ Authorization: "Bearer openrouter-secret" });
+    expect(request.model).toBe("typesafe/jev-1.13");
+    expect(result.model).toBe("typesafe/jev-1.13");
+  });
+  it("sends OpenRouter Decisions API Noul questions and parses independent probabilities", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      model: "typesafe/jev-1.13-20260917",
+      answers: {
+        option_1: { type: "noul", noul: .96 },
+        option_2: { type: "noul", noul: .04 }
+      }
+    }), { status: 200 })));
+    const endpoint = "https://openrouter.ai/api/alpha/decisions";
+    const result = await askJev({ ...base, questionType: "multiple" }, "openrouter-secret", undefined, { endpoint, model: "typesafe/jev-1.13" });
+    const [url, init] = vi.mocked(fetch).mock.calls[0];
+    const request = JSON.parse((init as RequestInit).body as string);
+    expect(url).toBe(endpoint);
+    expect((init as RequestInit).headers).toMatchObject({ Authorization: "Bearer openrouter-secret" });
+    expect(request).toMatchObject({
+      model: "typesafe/jev-1.13",
+      state: { options: { option_1: "A. 3", option_2: "B. 4" } },
+      questions: {
+        option_1: { type: "noul", instructions: { optionId: "option_1" } },
+        option_2: { type: "noul", instructions: { optionId: "option_2" } }
+      }
+    });
+    expect(result).toMatchObject({ mode: "independent-selection", options: [
+      { id: "option_1", probability: .96 }, { id: "option_2", probability: .04 }
+    ] });
+    expect(result.model).toBe("typesafe/jev-1.13-20260917");
+  });
   it("uses independent nouls for multiple choice", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ model: "jev-test", answers: { option_1: { type: "noul", noul: .8 }, option_2: { type: "noul", noul: .6 } } }), { status: 200 })));
     const result = await askJev({ ...base, questionType: "multiple" }, "secret");

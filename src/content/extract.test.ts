@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { extractFromElement, findQuestionContainer } from "./extract";
+import { extractFromElement, extractPageQuestions, findQuestionContainer } from "./extract";
 
 beforeEach(() => {
   document.body.innerHTML = `<main>
@@ -17,6 +17,71 @@ describe("DOM extraction", () => {
   it("chooses the current question instead of the whole multi-question page", () => {
     const target = document.getElementById("target")!;
     expect(findQuestionContainer(target).classList.contains("question")).toBe(true);
+  });
+  it("finds every question in the document, including questions below the viewport", () => {
+    const questions = document.querySelectorAll(".question");
+    Object.defineProperty(questions[0], "getBoundingClientRect", { configurable: true, value: () => ({ x: 20, y: 20, width: 500, height: 240, right: 520, bottom: 260 }) });
+    Object.defineProperty(questions[1], "getBoundingClientRect", { configurable: true, value: () => ({ x: 20, y: 1800, width: 500, height: 240, right: 520, bottom: 2040 }) });
+
+    const found = extractPageQuestions(document.body, { x: 0, y: 1800 });
+
+    expect(found).toHaveLength(2);
+    expect(found.map(({ question }) => question.stem)).toEqual(expect.arrayContaining(["中国的首都是？", "2 + 2 等于？"]));
+    expect(found[1].question.sourceRect.y).toBe(3600);
+    expect(found[0].question.coordinateSpace).toBe("document");
+    expect(found[0].question.options[0].sourceRect?.y).toBe(1830);
+    expect(found[0].question.options.map((option) => option.text)).toEqual(["上海", "北京"]);
+  });
+  it("keeps document coordinates stable while a nested scroll container is traversed", () => {
+    document.body.innerHTML = `<div id="question-list" style="height:200px;overflow-y:auto"><section class="question"><h2>Which option is correct?</h2><label>A. No</label><label>B. Yes</label></section></div>`;
+    const scroller = document.getElementById("question-list")!;
+    const question = document.querySelector(".question")!;
+    Object.defineProperty(scroller, "scrollHeight", { configurable: true, value: 1000 });
+    Object.defineProperty(scroller, "clientHeight", { configurable: true, value: 200 });
+    Object.defineProperty(question, "getBoundingClientRect", { configurable: true, value: () => {
+      const y = 250 - scroller.scrollTop;
+      return { x: 20, y, width: 500, height: 120, right: 520, bottom: y + 120 };
+    } });
+
+    const before = extractPageQuestions()[0].question.sourceRect;
+    scroller.scrollTop = 100;
+    const after = extractPageQuestions()[0].question.sourceRect;
+
+    expect(before.y).toBe(250);
+    expect(after.y).toBe(250);
+  });
+  it("extracts question structure and text from nested open Shadow DOM", () => {
+    document.body.innerHTML = "<quiz-question></quiz-question>";
+    const card = document.querySelector("quiz-question")!;
+    const cardRoot = card.attachShadow({ mode: "open" });
+    cardRoot.innerHTML = `<section class="question"><h2><question-stem></question-stem></h2><label><input type="radio"><answer-copy></answer-copy></label><label><input type="radio"><answer-copy></answer-copy></label></section>`;
+    const question = cardRoot.querySelector(".question")!;
+    const stem = question.querySelector("question-stem")!;
+    stem.attachShadow({ mode: "open" }).innerHTML = "Which option is correct?";
+    const answerCopies = question.querySelectorAll("answer-copy");
+    answerCopies[0].attachShadow({ mode: "open" }).innerHTML = "A. No";
+    answerCopies[1].attachShadow({ mode: "open" }).innerHTML = "B. Yes";
+
+    const found = extractPageQuestions();
+
+    expect(found).toHaveLength(1);
+    expect(found[0].question.stem).toBe("Which option is correct?");
+    expect(found[0].question.options.map((option) => [option.label, option.text])).toEqual([["A", "No"], ["B", "Yes"]]);
+    expect(found[0].question.questionType).toBe("single");
+  });
+  it("keeps identical questions at different page positions as separate candidates", () => {
+    document.body.innerHTML = `<main><section class="question"><h2>相同题目？</h2><label>A. 是</label><label>B. 否</label></section><section class="question"><h2>相同题目？</h2><label>A. 是</label><label>B. 否</label></section></main>`;
+    const questions = document.querySelectorAll(".question");
+    Object.defineProperty(questions[0], "getBoundingClientRect", { configurable: true, value: () => ({ x: 20, y: 20, width: 500, height: 240, right: 520, bottom: 260 }) });
+    Object.defineProperty(questions[1], "getBoundingClientRect", { configurable: true, value: () => ({ x: 20, y: 1800, width: 500, height: 240, right: 520, bottom: 2040 }) });
+
+    expect(extractPageQuestions()).toHaveLength(2);
+  });
+  it("does not merge nested question groups into their page wrapper", () => {
+    document.body.innerHTML = `<main><div class="quiz"><section class="question"><h2>Q1</h2><label>A. 1</label><label>B. 2</label></section><section class="question"><h2>Q2</h2><label>A. 3</label><label>B. 4</label></section></div></main>`;
+    const found = extractPageQuestions();
+    expect(found).toHaveLength(2);
+    expect(found.map(({ question }) => question.stem)).toEqual(["Q1", "Q2"]);
   });
   it("keeps the nearest question when a realistic page has several option groups", () => {
     const main = document.querySelector("main")!;

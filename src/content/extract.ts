@@ -24,6 +24,67 @@ function visible(element: Element): boolean {
   return style.display !== "none" && style.visibility !== "hidden" && style.visibility !== "collapse" && style.opacity !== "0" && rect.width > 0 && rect.height > 0;
 }
 function rectOf(element: Element) { const r = element.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; }
+function composedParent(element: Element): Element | null {
+  if (element.parentElement) return element.parentElement;
+  const root = element.getRootNode();
+  return root instanceof ShadowRoot ? root.host : null;
+}
+function composedTextParent(node: Text): Element | null {
+  if (node.parentElement) return node.parentElement;
+  const root = node.getRootNode();
+  return root instanceof ShadowRoot ? root.host : null;
+}
+function composedContains(ancestor: Element, node: Element): boolean {
+  for (let current: Element | null = node; current; current = composedParent(current)) if (current === ancestor) return true;
+  return false;
+}
+function isExcluded(element: Element): boolean {
+  for (let current: Element | null = element; current; current = composedParent(current)) {
+    if (current.matches(EXCLUDED)) return true;
+  }
+  return false;
+}
+function queryComposedAll<T extends Element>(root: Element, selector: string): T[] {
+  const results = new Set<Element>();
+  const visit = (container: Element | ShadowRoot) => {
+    container.querySelectorAll(selector).forEach((element) => results.add(element));
+    const hosts = [...container.querySelectorAll<Element>("*")];
+    if (container instanceof Element) hosts.unshift(container);
+    for (const host of hosts) if (host.shadowRoot) visit(host.shadowRoot);
+  };
+  visit(root);
+  return [...results] as T[];
+}
+function textNodesIncludingOpenShadowRoots(root: Element): Text[] {
+  const results: Text[] = [];
+  const visit = (container: Element | ShadowRoot) => {
+    const walker = container.ownerDocument.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+    let node: Node | null;
+    while ((node = walker.nextNode())) if (node instanceof Text) results.push(node);
+    const hosts = [...container.querySelectorAll<Element>("*")];
+    if (container instanceof Element) hosts.unshift(container);
+    for (const host of hosts) if (host.shadowRoot) visit(host.shadowRoot);
+  };
+  visit(root);
+  return results;
+}
+function isScrollable(element: Element): element is HTMLElement {
+  if (!(element instanceof HTMLElement)) return false;
+  const style = getComputedStyle(element);
+  const vertical = /^(auto|scroll|overlay)$/.test(style.overflowY) && element.scrollHeight > element.clientHeight;
+  const horizontal = /^(auto|scroll|overlay)$/.test(style.overflowX) && element.scrollWidth > element.clientWidth;
+  return vertical || horizontal;
+}
+function pageRectOf(element: Element, scrollOffset: { x: number; y: number }) {
+  const rect = rectOf(element);
+  let x = rect.x + scrollOffset.x, y = rect.y + scrollOffset.y;
+  // Overflow descendants move in viewport coordinates as they are traversed.
+  // Add ancestor offsets back so page-space coordinates remain stable.
+  for (let parent = composedParent(element); parent; parent = composedParent(parent)) {
+    if (isScrollable(parent)) { x += parent.scrollLeft; y += parent.scrollTop; }
+  }
+  return { ...rect, x, y };
+}
 function cleanText(text: string): string { return text.replace(/[\t ]+/g, " ").replace(/\n{3,}/g, "\n\n").trim(); }
 function isOptionNode(node: Element): boolean {
   if (!visible(node)) return false;
@@ -41,10 +102,10 @@ function intersects(element: Element, clip?: { x: number; y: number; width: numb
 
 function textIntersects(node: Node, clip?: { x: number; y: number; width: number; height: number }): boolean {
   if (!clip) return true;
-  const parent = node.parentElement;
+  const parent = node.parentElement ?? (node instanceof Text ? composedTextParent(node) : null);
   if (!parent) return false;
   try {
-    const range = document.createRange();
+    const range = (node.ownerDocument ?? document).createRange();
     range.selectNodeContents(node);
     const rect = range.getBoundingClientRect();
     if (rect.width || rect.height) {
@@ -59,11 +120,11 @@ function textIntersects(node: Node, clip?: { x: number; y: number; width: number
 }
 
 function visibleText(element: Element, clip?: { x: number; y: number; width: number; height: number }): string {
-  const pieces: string[] = [], walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
-  let node: Node | null;
-  while ((node = walker.nextNode())) {
-    const parent = node.parentElement;
-    if (!parent || parent.closest(EXCLUDED) || !visible(parent) || !textIntersects(node, clip)) continue;
+  const pieces: string[] = [];
+  const debugNodes = textNodesIncludingOpenShadowRoots(element);
+  for (const node of debugNodes) {
+    const parent = composedTextParent(node);
+    if (!parent || isExcluded(parent) || !visible(parent) || !textIntersects(node, clip)) continue;
     const value = node.textContent?.trim(); if (value) pieces.push(value);
   }
   if (pieces.length) return cleanText(pieces.join("\n"));
@@ -72,11 +133,10 @@ function visibleText(element: Element, clip?: { x: number; y: number; width: num
 }
 
 function visibleTextExcept(element: Element, excluded: Element[], clip?: { x: number; y: number; width: number; height: number }): string {
-  const pieces: string[] = [], walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
-  let node: Node | null;
-  while ((node = walker.nextNode())) {
-    const parent = node.parentElement;
-    if (!parent || excluded.some((candidate) => candidate !== element && candidate.contains(parent)) || parent.closest(EXCLUDED) || !visible(parent) || !textIntersects(node, clip)) continue;
+  const pieces: string[] = [];
+  for (const node of textNodesIncludingOpenShadowRoots(element)) {
+    const parent = composedTextParent(node);
+    if (!parent || excluded.some((candidate) => candidate !== element && composedContains(candidate, parent)) || isExcluded(parent) || !visible(parent) || !textIntersects(node, clip)) continue;
     const value = node.textContent?.trim(); if (value) pieces.push(value);
   }
   return cleanText(pieces.join("\n"));
@@ -86,13 +146,13 @@ export function findQuestionContainer(start: Element): Element {
   let current: Element | null = start;
   let best = start;
   let bestScore = -Infinity;
-  for (let depth = 0; current && depth < 8; depth++, current = current.parentElement) {
-    if (current.matches(EXCLUDED)) continue;
-    const text = cleanText((current as HTMLElement).innerText || current.textContent || "");
-    const controls = current.querySelectorAll("input[type=radio],input[type=checkbox]").length;
-    const lists = current.querySelectorAll("li,label").length;
-    const semanticOptions = current.querySelectorAll("[role=radio],[role=checkbox],[role=option],tr").length;
-    const images = current.querySelectorAll("img,canvas,svg").length;
+  for (let depth = 0; current && depth < 8; depth++, current = composedParent(current)) {
+    if (isExcluded(current)) continue;
+    const text = visibleText(current);
+    const controls = queryComposedAll(current, "input[type=radio],input[type=checkbox]").length;
+    const lists = queryComposedAll(current, "li,label").length;
+    const semanticOptions = queryComposedAll(current, "[role=radio],[role=checkbox],[role=option],tr").length;
+    const images = queryComposedAll(current, "img,canvas,svg").length;
     const rect = current.getBoundingClientRect();
     const oversize = current === document.body || current === document.documentElement || rect.height > innerHeight * 1.8 || rect.width > innerWidth * 1.2 || text.length > 5000 ? 100 : 0;
     // Prefer the nearest self-contained question group.  A page with several
@@ -105,16 +165,101 @@ export function findQuestionContainer(start: Element): Element {
   return best;
 }
 
+export interface PageQuestionCandidate {
+  element: Element;
+  question: ExtractedQuestion;
+}
+
+const PAGE_QUESTION_SELECTORS = [
+  "[data-question]", "[data-question-id]", "[data-testid*='question' i]",
+  "[class*='question' i]", "[id*='question' i]", "[class*='problem' i]", "[id*='problem' i]",
+  "[role='radiogroup']", "fieldset", "form", "section", "article"
+].join(",");
+const PAGE_OPTION_SELECTORS = "input[type=radio],input[type=checkbox],[role=radio],[role=checkbox],[role=option],li,label,tr";
+
+/**
+ * Finds every independently identifiable question in the current document,
+ * including rendered DOM nodes outside the viewport. It deliberately returns
+ * the smallest valid question roots so a page wrapper containing several
+ * questions is never flattened into one probability distribution.
+ */
+export function extractPageQuestions(root: Element = document.body, scrollOffset = { x: 0, y: 0 }): PageQuestionCandidate[] {
+  const candidates = new Set<Element>();
+  if (root.matches(PAGE_QUESTION_SELECTORS)) candidates.add(root);
+  queryComposedAll(root, PAGE_QUESTION_SELECTORS).forEach((element) => candidates.add(element));
+  queryComposedAll(root, PAGE_OPTION_SELECTORS).forEach((anchor) => {
+    if (!visible(anchor) || isExcluded(anchor)) return;
+    const questionRoot = findQuestionContainer(anchor);
+    if (questionRoot !== root && !composedContains(root, questionRoot)) return;
+    candidates.add(questionRoot);
+  });
+
+  const extracted = [...candidates]
+    .filter((element) => !isExcluded(element) && visible(element))
+    .map((element) => ({ element, question: extractFromElement(element) }))
+    .filter(({ question }) => question.stem.trim().length > 0 && question.options.length >= 2);
+
+  const roots = extracted.filter((candidate) => !extracted.some((other) =>
+    other.element !== candidate.element && composedContains(candidate.element, other.element)
+  ));
+  const seen = new Set<string>();
+  const results: PageQuestionCandidate[] = [];
+  for (const candidate of roots) {
+    const question = candidate.question;
+    const pageRect = pageRectOf(candidate.element, scrollOffset);
+    const offsetX = pageRect.x - question.sourceRect.x, offsetY = pageRect.y - question.sourceRect.y;
+    const fingerprint = [normalizeFingerprint(question.stem), ...question.options.map((option) => `${option.label}:${normalizeFingerprint(option.text)}`)].join("|");
+    const key = `${fingerprint}|${Math.round(pageRect.x)}|${Math.round(pageRect.y)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    results.push({
+      element: candidate.element,
+      question: {
+        ...question,
+        coordinateSpace: "document",
+        sourceRect: pageRect,
+        options: question.options.map((option) => option.sourceRect ? {
+          ...option,
+          sourceRect: { ...option.sourceRect, x: option.sourceRect.x + offsetX, y: option.sourceRect.y + offsetY }
+        } : option)
+      }
+    });
+  }
+
+  if (results.length) return results.sort((left, right) => left.question.sourceRect.y - right.question.sourceRect.y || left.question.sourceRect.x - right.question.sourceRect.x);
+
+  const fallback = extractFromElement(root);
+  return fallback.stem.trim().length > 0 && fallback.options.length >= 2
+    ? (() => {
+      const pageRect = pageRectOf(root, scrollOffset);
+      const offsetX = pageRect.x - fallback.sourceRect.x, offsetY = pageRect.y - fallback.sourceRect.y;
+      return [{ element: root, question: {
+        ...fallback,
+        coordinateSpace: "document",
+        sourceRect: pageRect,
+        options: fallback.options.map((option) => option.sourceRect ? {
+          ...option,
+          sourceRect: { ...option.sourceRect, x: option.sourceRect.x + offsetX, y: option.sourceRect.y + offsetY }
+        } : option)
+      } }];
+    })()
+    : [];
+}
+
+function normalizeFingerprint(value: string): string {
+  return value.normalize("NFKC").replace(/[\s\p{P}\p{S}]+/gu, "").toLocaleLowerCase();
+}
+
 export function extractFromElement(element: Element, clip?: { x: number; y: number; width: number; height: number }): ExtractedQuestion {
-  const controls = [...element.querySelectorAll<HTMLInputElement>("input[type=radio],input[type=checkbox]")].filter((input) => visible(input) && intersects(input, clip));
+  const controls = queryComposedAll<HTMLInputElement>(element, "input[type=radio],input[type=checkbox]").filter((input) => visible(input) && intersects(input, clip));
   const optionElements = controls.length
-    ? controls.map((input) => input.closest("label") ?? (input.id ? element.querySelector(`label[for='${CSS.escape(input.id)}']`) : null) ?? input.parentElement).filter(Boolean) as Element[]
-    : [...element.querySelectorAll("li,label,[role=radio],[role=checkbox],[role=option],tr")].filter((node) => isOptionNode(node) && intersects(node, clip));
+    ? controls.map((input) => input.closest("label") ?? (input.id ? queryComposedAll(element, `label[for='${CSS.escape(input.id)}']`).find((label) => label.ownerDocument === input.ownerDocument) : null) ?? composedParent(input)).filter(Boolean) as Element[]
+    : queryComposedAll(element, "li,label,[role=radio],[role=checkbox],[role=option],tr").filter((node) => isOptionNode(node) && intersects(node, clip));
   const dedup = [...new Set(optionElements)];
   const options: QuestionOption[] = dedup.map((node, index) => {
-    const raw = cleanText(visibleText(node, clip) || node.getAttribute("aria-label") || node.getAttribute("title") || node.querySelector("input, [role=radio], [role=checkbox], [role=option]")?.getAttribute("aria-label") || "");
+    const raw = cleanText(visibleText(node, clip) || node.getAttribute("aria-label") || node.getAttribute("title") || queryComposedAll(node, "input, [role=radio], [role=checkbox], [role=option]")[0]?.getAttribute("aria-label") || "");
     const parsed = parseOptionLine(raw, index);
-    return { id: `option_${index + 1}`, label: parsed?.label ?? fallbackOptionLabel(index), text: parsed?.text || raw };
+    return { id: `option_${index + 1}`, label: parsed?.label ?? fallbackOptionLabel(index), text: parsed?.text || raw, sourceRect: rectOf(node) };
   }).filter((x) => x.text);
   const allText = visibleText(element, clip);
   let stem = visibleTextExcept(element, dedup, clip) || allText;
@@ -125,14 +270,14 @@ export function extractFromElement(element: Element, clip?: { x: number; y: numb
   stem = cleanText(stem.replace(/\s*[A-H][.、)）:]?\s*$/, ""));
   const hasCheckbox = controls.some((input) => input.type === "checkbox");
   const hasRadio = controls.some((input) => input.type === "radio");
-  const hasCheckboxRole = !!element.querySelector("[role=checkbox]");
-  const hasRadioRole = !!element.querySelector("[role=radio]");
+  const hasCheckboxRole = queryComposedAll(element, "[role=checkbox]").length > 0;
+  const hasRadioRole = queryComposedAll(element, "[role=radio]").length > 0;
   const questionType = hasCheckbox || hasCheckboxRole ? "multiple" : hasRadio || hasRadioRole ? "single" : MULTIPLE_CUE.test(allText) ? "multiple" : SINGLE_CUE.test(allText) ? "single" : "unknown";
-  const visualElements = (element.matches("img,canvas,svg") ? [element, ...element.querySelectorAll("img,canvas,svg")] : [...element.querySelectorAll("img,canvas,svg")]).filter((image) => visible(image) && intersects(image, clip));
+  const visualElements = (element.matches("img,canvas,svg") ? [element, ...queryComposedAll(element, "img,canvas,svg")] : queryComposedAll(element, "img,canvas,svg")).filter((image) => visible(image) && intersects(image, clip));
   const imageContext = visualElements.map((image) => image.getAttribute("alt") || image.getAttribute("aria-label") || image.getAttribute("title") || "").map(cleanText).filter(Boolean).join("\n");
   const hasUnlabelledVisual = visualElements.some((image) => !cleanText(image.getAttribute("alt") || image.getAttribute("aria-label") || image.getAttribute("title") || ""));
   const hasRelevantVisual = visualElements.length > 0 && (VISUAL_CUE.test(`${allText}\n${imageContext}`) || hasUnlabelledVisual);
-  const hasFormulaMarkup = element.matches("math,msup,msub,sup,sub,[class*='katex' i],[class*='mathjax' i]") || !!element.querySelector("math,msup,msub,sup,sub,[class*='katex' i],[class*='mathjax' i]");
+  const hasFormulaMarkup = element.matches("math,msup,msub,sup,sub,[class*='katex' i],[class*='mathjax' i]") || queryComposedAll(element, "math,msup,msub,sup,sub,[class*='katex' i],[class*='mathjax' i]").length > 0;
   const warnings: RecognitionWarning[] = stem && options.length >= 2 ? [] : ["INCOMPLETE_OPTIONS"];
   if (FORMULA_CUE.test(allText) || hasFormulaMarkup) warnings.push("POSSIBLE_FORMULA");
   if (hasRelevantVisual) warnings.push("POSSIBLE_DIAGRAM", "VISION_MODEL_REQUIRED");

@@ -1,5 +1,5 @@
 import puppeteer from "puppeteer-core";
-import { access, mkdtemp, rm } from "node:fs/promises";
+import { access, cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -18,10 +18,21 @@ const candidates = [process.env.CHROME_PATH, ...platformCandidates].filter(Boole
 let executablePath;
 for (const candidate of candidates) { try { await access(candidate); executablePath = candidate; break; } catch { /* try next */ } }
 if (!executablePath) throw new Error("Chrome/Chromium not found; set CHROME_PATH to run the extension smoke test.");
-const extensionPath = fileURLToPath(new URL("../dist/", import.meta.url)), userDataDir = await mkdtemp(join(tmpdir(), "jev-swot-smoke-"));
-let browser, server;
+const extensionPath = fileURLToPath(new URL("../dist/", import.meta.url)), userDataDir = await mkdtemp(join(tmpdir(), "jev-swot-smoke-profile-"));
+const smokeExtensionRoot = await mkdtemp(join(tmpdir(), "jev-swot-smoke-extension-"));
+const smokeExtensionPath = join(smokeExtensionRoot, "extension");
+await cp(extensionPath, smokeExtensionPath, { recursive: true });
+const smokeManifestPath = join(smokeExtensionPath, "manifest.json");
+const smokeManifest = JSON.parse(await readFile(smokeManifestPath, "utf8"));
+// Promote the optional HTTP/HTTPS page origins in this isolated test copy to
+// granted host permissions. This exercises the same per-site access path as
+// whole-page scanning without broadening the test copy to <all_urls> or relying
+// on browser UI gestures, which Puppeteer cannot faithfully grant.
+smokeManifest.host_permissions = [...new Set([...(smokeManifest.host_permissions ?? []), ...(smokeManifest.optional_host_permissions ?? [])])];
+await writeFile(smokeManifestPath, `${JSON.stringify(smokeManifest, null, 2)}\n`);
+let browser, server, frameServer;
 try {
-  browser = await puppeteer.launch({ executablePath, headless: true, userDataDir, enableExtensions: [extensionPath], args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-crash-reporter"] });
+  browser = await puppeteer.launch({ executablePath, headless: true, userDataDir, enableExtensions: [smokeExtensionPath], args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-crash-reporter"] });
   let target;
   try {
     // macOS runners can take considerably longer to expose an MV3 worker after
@@ -33,7 +44,7 @@ try {
     throw new Error(`Extension service worker did not start; observed targets: ${JSON.stringify(targets)}`, { cause: error });
   }
   const extensionId = new URL(target.url()).host;
-  const workerSession = await target.createCDPSession(); let jevRequests = 0, llmRequests = 0, visionRequests = 0, directAnswerRequests = 0, rawAnswerRequests = 0, forceVisionUnsupported = false, forceVisionMissingContext = false, forceStructuredMissingIgnored = false, jevInputWasClean = false, multipleJevTargetsExplicit = false;
+  const workerSession = await target.createCDPSession(); let jevRequests = 0, llmRequests = 0, visionRequests = 0, directAnswerRequests = 0, rawAnswerRequests = 0, forceVisionUnsupported = false, forceVisionMissingContext = false, forceStructuredMissingIgnored = false, jevInputWasClean = false, multipleJevTargetsExplicit = false; const jevQuestionStems = [];
   await workerSession.send("Fetch.enable", { patterns: [{ urlPattern: "https://api.typesafe.ai/*", requestStage: "Request" }, { urlPattern: "https://api.openai.com/*", requestStage: "Request" }] });
   workerSession.on("Fetch.requestPaused", (event) => {
     if (event.request.url.startsWith("https://api.typesafe.ai/") && event.request.url.endsWith("/v1/systemone")) {
@@ -43,6 +54,7 @@ try {
       else if (requestBody.includes("Which number is even?")) jevInputWasClean = true;
       let payload;
       try { payload = JSON.parse(requestBody); } catch { payload = undefined; }
+      if (typeof payload?.state?.stem === "string") jevQuestionStems.push(payload.state.stem);
       const questionEntries = Object.entries(payload?.questions ?? {});
       const multiple = questionEntries.length > 0 && questionEntries.every(([, value]) => value?.type === "noul");
       if (multiple) {
@@ -103,7 +115,7 @@ try {
   const page = await browser.newPage();
   await page.goto(`chrome-extension://${extensionId}/options.html`, { waitUntil: "domcontentloaded" });
   const title = await page.$eval("h1", (element) => element.textContent);
-  if (title !== "Jev 做题家设置 Jev SWOT") throw new Error(`Unexpected options title: ${title}`);
+  if (title !== "做题 Jev 设置") throw new Error(`Unexpected options title: ${title}`);
   const commands = await page.evaluate(() => chrome.commands.getAll());
   if (!commands.some((command) => command.name === "select-question") || !commands.some((command) => command.name === "select-question-alt")) throw new Error(`Manifest commands are not registered: ${JSON.stringify(commands)}`);
   console.log(`Smoke: commands registered ${commands.map((command) => `${command.name}=${command.shortcut || "unassigned"}`).join(", ")}`);
@@ -128,7 +140,10 @@ try {
     pageAccessGranted = await page.evaluate(() => chrome.permissions.contains({ origins: ["http://*/*", "https://*/*"] }));
   }
   if (pageAccessGranted) {
-    await page.waitForFunction(async () => (await chrome.scripting.getRegisteredContentScripts({ ids: ["jev-swot-content"] })).length > 0, { timeout: 5_000 });
+    await page.waitForFunction(async () => {
+      const [script] = await chrome.scripting.getRegisteredContentScripts({ ids: ["jev-swot-content"] });
+      return script?.allFrames === true;
+    }, { timeout: 5_000 });
     console.log("Smoke: optional page access granted and persistent content script registered");
   } else {
     console.log("Smoke: optional page access was not granted by headless Chrome; page gesture checks remain in the manual release checklist");
@@ -146,7 +161,51 @@ try {
   if (!ocrText.includes("even") || !ocrText.includes("3") || !ocrText.includes("4")) throw new Error(`Packaged OCR did not recover the expected test question text: ${JSON.stringify({ text: ocr.text, confidence: ocr.confidence, backend: ocr.backend })}`);
   if (pageAccessGranted) {
     console.log("Smoke: OCR ready; testing page interaction");
-    server = createServer((_request, response) => { response.setHeader("content-type", "text/html; charset=utf-8"); response.end(`<!doctype html><html><body><main><section id="question"><h2>2 + 2 等于多少？</h2><label id="choice-a"><input type="radio" name="answer">A. 3</label><label><input type="radio" name="answer">B. 4</label></section><section id="other"><h2>1 + 1 等于多少？</h2><label><input type="radio" name="other-answer">A. 1</label><label><input type="radio" name="other-answer">B. 2</label></section></main></body></html>`); });
+    frameServer = createServer((_request, response) => {
+      response.setHeader("content-type", "text/html; charset=utf-8");
+      response.end(`<!doctype html><html><body><div style="height:7200px"></div><section class="question"><h2>Which question is inside a cross-origin frame?</h2><label><input type="radio">A. No</label><label><input type="radio">B. Yes</label></section><section class="question"><h2>如图，which option matches the diagram?</h2><canvas width="200" height="90"></canvas><label><input type="radio">A. No</label><label><input type="radio">B. Yes</label></section><script>window.__maxYSeen=0;addEventListener('scroll',()=>{window.__maxYSeen=Math.max(window.__maxYSeen,scrollY);parent.postMessage({type:'frame-scroll',y:scrollY},'*')},{passive:true});scrollTo(0,80)</script></body></html>`);
+    });
+    await new Promise((resolve) => frameServer.listen(0, "127.0.0.1", resolve));
+    const frameAddress = frameServer.address(); if (!frameAddress || typeof frameAddress === "string") throw new Error("Failed to start cross-origin frame page");
+    server = createServer((_request, response) => {
+      response.setHeader("content-type", "text/html; charset=utf-8");
+      response.end(`<!doctype html>
+<html><body><main>
+  <section id="question"><h2>2 + 2 等于多少？</h2><label id="choice-a"><input type="radio" name="answer">A. 3</label><label><input type="radio" name="answer">B. 4</label></section>
+  <div style="height:12000px"></div>
+  <section id="far-question"><h2>What is the final question on this long page?</h2><label><input type="radio" name="far-answer">A. Begin</label><label><input type="radio" name="far-answer">B. End</label></section>
+  <div id="nested-list" style="height:240px;overflow-y:auto"><div style="height:2200px"></div><div id="nested-question-host"></div></div>
+  <quiz-question id="shadow-question-host"></quiz-question>
+</main><script>
+window.__maxYSeen=0;
+window.__crossFrameMaxY=0;window.__crossFrameY=-1;
+window.addEventListener('message',event=>{if(event.data?.type==='frame-scroll'){window.__crossFrameY=event.data.y;window.__crossFrameMaxY=Math.max(window.__crossFrameMaxY,event.data.y)}});
+window.addEventListener('scroll',()=>{
+  window.__maxYSeen=Math.max(window.__maxYSeen,window.scrollY);
+  if(window.scrollY>700&&!document.querySelector('#other')&&!window.otherQuestionPending){
+    window.otherQuestionPending=true;
+    setTimeout(()=>{if(document.querySelector('#other'))return;const section=document.createElement('section');section.id='other';section.innerHTML='<h2>Which number is even?</h2><label><input type="radio" name="other-answer">A. 3</label><label><input type="radio" name="other-answer">B. 4</label><canvas width="200" height="90"></canvas>';document.body.append(section)},1500)
+  }
+},{passive:true});
+const nested=document.querySelector('#nested-list');
+nested.addEventListener('scroll',()=>{
+  if(nested.scrollTop>1200&&!window.nestedQuestionPending){
+    window.nestedQuestionPending=true;
+    setTimeout(()=>{if(document.querySelector('#nested-question'))return;const section=document.createElement('section');section.id='nested-question';section.innerHTML='<h2>Which option is at the end of a nested scroll panel?</h2><label><input type="radio" name="nested-answer">A. Start</label><label><input type="radio" name="nested-answer">B. End</label>';document.querySelector('#nested-question-host').append(section)},1500)
+  }
+});
+const shadowHost=document.querySelector('#shadow-question-host');
+const shadow=shadowHost.attachShadow({mode:'open'});
+shadow.innerHTML='<section class="question"><h2>Which question is inside an open shadow root?</h2><label><input type="radio" name="shadow-answer">A. No</label><label><input type="radio" name="shadow-answer">B. Yes</label></section>';
+const embeddedFrame=document.createElement('iframe');
+embeddedFrame.id='embedded-question';embeddedFrame.style.width='300px';embeddedFrame.style.height='180px';
+embeddedFrame.srcdoc='<section class="question"><h2>Which question is inside an embedded frame?</h2><label><input type="radio">A. No</label><label><input type="radio">B. Yes</label></section>';
+const crossOriginFrame=document.createElement('iframe');
+crossOriginFrame.id='cross-origin-question';crossOriginFrame.style.width='300px';crossOriginFrame.style.height='180px';
+crossOriginFrame.src='http://127.0.0.1:${frameAddress.port}/frame.html';
+document.querySelector('main').append(embeddedFrame,crossOriginFrame);
+</script></body></html>`);
+    });
     await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address(); if (!address || typeof address === "string") throw new Error("Failed to start smoke page");
     const questionPage = await browser.newPage(); await questionPage.goto(`http://127.0.0.1:${address.port}/`, { waitUntil: "networkidle0" });
@@ -162,12 +221,99 @@ try {
     if (jevRequests !== requestsBeforeDisabledSite) throw new Error("Disabled site still sent a JEV request");
     await page.evaluate(async () => {
       const stored = await chrome.storage.local.get("settings");
-      await chrome.storage.local.set({ settings: { ...(stored.settings ?? {}), disabledHosts: [] } });
+      await chrome.storage.local.set({ settings: { ...(stored.settings ?? {}), llm: { ...(stored.settings?.llm ?? {}), vision: "auto" }, disabledHosts: [] } });
     });
+    const visionRequestsBeforeBatch = visionRequests;
     await questionPage.reload({ waitUntil: "networkidle0" });
+    await questionPage.evaluate(() => {
+      const nested = document.querySelector("#nested-list");
+      nested.__maxScrollTopSeen = 0;
+      nested.addEventListener("scroll", () => { nested.__maxScrollTopSeen = Math.max(nested.__maxScrollTopSeen, nested.scrollTop); }, { passive: true });
+      window.scrollTo(0, 100);
+      nested.scrollTop = 160;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const stemsBeforeBatch = jevQuestionStems.length;
+    const requestsBeforeBatch = jevRequests;
     await questionPage.$eval("#choice-a", (element) => element.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, altKey: true })));
-    await questionPage.waitForSelector('[data-jev-swot-root="true"]', { timeout: 5_000 });
-    await new Promise((resolve, reject) => { const deadline = Date.now() + 5_000; const poll = () => jevRequests ? resolve() : Date.now() > deadline ? reject(new Error("Mock JEV request was not observed")) : setTimeout(poll, 50); poll(); });
+    await questionPage.waitForSelector('[data-jev-swot-root="page-results"]', { timeout: 5_000 });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    if (jevRequests !== requestsBeforeBatch) throw new Error("Whole-page question text was sent before the user confirmed the batch");
+    const pageSession = await questionPage.createCDPSession();
+    await pageSession.send("Accessibility.enable");
+    const { nodes } = await pageSession.send("Accessibility.getFullAXTree");
+    const startButton = nodes.find((node) => node.role?.value === "button" && node.name?.value === "开始整页分析");
+    if (!startButton?.backendDOMNodeId) throw new Error("Whole-page confirmation button is missing from the accessibility tree");
+    const confirmationText = nodes.map((node) => node.name?.value).filter(Boolean).join(" ");
+    if (!confirmationText.includes("视觉题截图") || !confirmationText.includes("浏览器快捷键") || !confirmationText.includes("单独重试该题")) throw new Error(`Whole-page confirmation did not disclose the visual-screenshot permission/retry requirement: ${confirmationText.slice(-800)}`);
+    const { object } = await pageSession.send("DOM.resolveNode", { backendNodeId: startButton.backendDOMNodeId });
+    await pageSession.send("Runtime.callFunctionOn", { objectId: object.objectId, functionDeclaration: "function(){this.click();document.querySelector('#choice-a').dispatchEvent(new MouseEvent('dblclick',{bubbles:true,cancelable:true,altKey:true}));}", returnByValue: true });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    if (jevRequests !== requestsBeforeBatch) throw new Error("A superseded whole-page scan sent questions after a rapid Alt+doubleclick restart");
+    const { nodes: restartedNodes } = await pageSession.send("Accessibility.getFullAXTree");
+    const restartedStartButton = restartedNodes.find((node) => node.role?.value === "button" && node.name?.value === "开始整页分析");
+    if (!restartedStartButton?.backendDOMNodeId) throw new Error("Rapidly restarted whole-page scan did not show a fresh confirmation step");
+    const { object: restartedObject } = await pageSession.send("DOM.resolveNode", { backendNodeId: restartedStartButton.backendDOMNodeId });
+    await pageSession.send("Runtime.callFunctionOn", { objectId: restartedObject.objectId, functionDeclaration: "function(){this.click();}", returnByValue: true });
+    await new Promise((resolve, reject) => { const deadline = Date.now() + 60_000; const poll = async () => {
+      const { nodes: currentNodes } = await pageSession.send("Accessibility.getFullAXTree");
+      const visibleText = currentNodes.map((node) => node.name?.value).filter(Boolean).join(" ");
+      const retryButton = currentNodes.find((node) => node.role?.value === "button" && node.name?.value === "重新尝试这道题");
+      if (jevRequests >= requestsBeforeBatch + 6 && visionRequests === visionRequestsBeforeBatch && visibleText.includes("已处理 8 / 8 题") && visibleText.includes("第 1 题") && visibleText.includes("第 8 题") && visibleText.includes("What is the final question on this long page?") && visibleText.includes("Which option is at the end of a nested scroll panel?") && visibleText.includes("Which question is inside an open shadow root?") && visibleText.includes("Which question is inside an embedded frame?") && visibleText.includes("Which question is inside a cross-origin frame?") && visibleText.includes("为避免截取错位内容") && visibleText.includes("浏览器截图还需要当前页的临时扩展权限") && retryButton?.backendDOMNodeId) { resolve(); return; }
+      if (Date.now() > deadline) { reject(new Error(`Expected eight independent page results and a recoverable screenshot-permission error before activeTab is granted; JEV=${jevRequests - requestsBeforeBatch}, vision=${visionRequests - visionRequestsBeforeBatch}, overlay=${visibleText.slice(-1200)}`)); return; }
+      setTimeout(() => { void poll(); }, 50);
+    }; void poll(); });
+    if (visionRequests !== visionRequestsBeforeBatch) throw new Error("Alt+doubleclick unexpectedly captured a visual question without a browser-level activeTab gesture");
+    // Headless page input cannot stand in for a real browser-toolbar invocation
+    // of the activeTab-granting command. Keep the per-question retry visible;
+    // the exact browser UI grant/retry remains a manual release check.
+    await new Promise((resolve, reject) => { const deadline = Date.now() + 10_000; const poll = async () => { if (Math.abs(await questionPage.evaluate(() => window.scrollY) - 100) < 2) resolve(); else if (Date.now() > deadline) reject(new Error("Whole-page scan did not restore the original scroll position")); else setTimeout(poll, 50); }; void poll(); });
+    if (Math.abs(await questionPage.$eval("#nested-list", (element) => element.scrollTop) - 160) > 2) throw new Error("Whole-page scan did not restore the original nested scroll position");
+    const batchStems = jevQuestionStems.slice(stemsBeforeBatch);
+    if (!batchStems.includes("2 + 2 等于多少？") || !batchStems.includes("What is the final question on this long page?") || !batchStems.includes("Which option is at the end of a nested scroll panel?") || !batchStems.includes("Which question is inside an open shadow root?") || !batchStems.includes("Which question is inside an embedded frame?") || !batchStems.includes("Which question is inside a cross-origin frame?") || batchStems.length !== 6) throw new Error(`Whole-page scan did not send all six safe DOM questions independently through JEV: ${JSON.stringify(batchStems)}`);
+    const pageExtent = await questionPage.evaluate(() => ({ maxYSeen: window.__maxYSeen, pageEnd: document.documentElement.scrollHeight - window.innerHeight }));
+    if (pageExtent.maxYSeen < pageExtent.pageEnd - 4) throw new Error(`Whole-page scan did not reach the document end: ${JSON.stringify(pageExtent)}`);
+    const nestedExtent = await questionPage.$eval("#nested-list", (element) => ({ maxScrollTopSeen: element.__maxScrollTopSeen, scrollEnd: element.scrollHeight - element.clientHeight }));
+    if (nestedExtent.maxScrollTopSeen < nestedExtent.scrollEnd - 4) throw new Error(`Whole-page scan did not reach the nested scroll end: ${JSON.stringify(nestedExtent)}`);
+    const frameExtent = await questionPage.evaluate(() => ({ maxYSeen: window.__crossFrameMaxY, currentY: window.__crossFrameY }));
+    if (frameExtent.maxYSeen < 6_000 || Math.abs(frameExtent.currentY - 80) > 2) throw new Error(`Cross-origin frame was not fully scanned and restored to its original scroll offset: ${JSON.stringify(frameExtent)}`);
+
+    // Re-run and cancel while the long cross-origin frame itself is scrolling.
+    // The new confirmation panel must wait for the old frame to restore before
+    // a replacement scan can begin.
+    await questionPage.evaluate(() => { window.__crossFrameMaxY = 0; window.__crossFrameY = -1; });
+    await questionPage.$eval("#choice-a", (element) => element.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, altKey: true })));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const { nodes: secondNodes } = await pageSession.send("Accessibility.getFullAXTree");
+    const secondStart = secondNodes.find((node) => node.role?.value === "button" && node.name?.value === "开始整页分析");
+    if (!secondStart?.backendDOMNodeId) throw new Error("A fresh confirmation panel was not shown for frame cancellation coverage");
+    const { object: secondStartObject } = await pageSession.send("DOM.resolveNode", { backendNodeId: secondStart.backendDOMNodeId });
+    await pageSession.send("Runtime.callFunctionOn", { objectId: secondStartObject.objectId, functionDeclaration: "function(){this.click();}", returnByValue: true });
+    await questionPage.waitForFunction(() => window.__crossFrameY > 500 && window.__crossFrameY < 5_000, { timeout: 30_000 });
+    const requestsBeforeFrameCancel = jevRequests;
+    await questionPage.$eval("#choice-a", (element) => element.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, altKey: true })));
+    await new Promise((resolve, reject) => { const deadline = Date.now() + 10_000; const poll = async () => {
+      const state = await questionPage.evaluate(() => ({ frameY: window.__crossFrameY, pageY: window.scrollY }));
+      if (Math.abs(state.frameY - 80) <= 2 && Math.abs(state.pageY - 100) <= 2) { resolve(); return; }
+      if (Date.now() > deadline) { reject(new Error(`Cancelled frame scan did not restore scroll positions: ${JSON.stringify(state)}`)); return; }
+      setTimeout(() => { void poll(); }, 50);
+    }; void poll(); });
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    if (jevRequests !== requestsBeforeFrameCancel) throw new Error("A cancelled frame scan sent further question requests after replacement");
+    if (!await questionPage.$('[data-jev-swot-root="page-results"]')) throw new Error("Cancelling an embedded-frame scan did not leave the replacement confirmation panel visible");
+    await questionPage.keyboard.down("Control");
+    await questionPage.keyboard.down("Shift");
+    await questionPage.keyboard.press("Y");
+    await questionPage.keyboard.up("Shift");
+    await questionPage.keyboard.up("Control");
+    if (!await questionPage.$('[data-jev-swot-root="page-results"]') || await questionPage.$('[data-jev-swot-root="selection"]')) throw new Error("A selection shortcut closed the whole-page results panel instead of preserving the per-question results");
+    await pageSession.detach();
+    await page.evaluate(async () => {
+      const stored = await chrome.storage.local.get("settings");
+      await chrome.storage.local.set({ settings: { ...(stored.settings ?? {}), llm: { ...(stored.settings?.llm ?? {}), vision: "unsupported" } } });
+    });
+    // Subsequent assertions cover isolated model-routing scenarios.
+    visionRequests = 0;
     const answerChanged = await questionPage.$eval('input[type="radio"]', (input) => input.checked);
     if (answerChanged) throw new Error("Extension modified the page answer during smoke test");
   }
@@ -287,7 +433,7 @@ try {
   if (!multiple?.ok || multiple.probability?.mode !== "independent-selection" || multiple.probability.options.length !== 2) throw new Error(`Multiple-choice Noul smoke returned an invalid response: ${JSON.stringify(multiple)}`);
   if (!multipleJevTargetsExplicit) throw new Error("Multiple-choice Noul request did not identify each target option without embedding option text");
   await browser.close();
-  browser = await puppeteer.launch({ executablePath, headless: true, userDataDir, enableExtensions: [extensionPath], args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-crash-reporter"] });
+  browser = await puppeteer.launch({ executablePath, headless: true, userDataDir, enableExtensions: [smokeExtensionPath], args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-crash-reporter"] });
   await browser.waitForTarget((item) => item.type() === "service_worker" && item.url().includes("assets/background.js"), { timeout: 15_000 });
   const restartedPage = await browser.newPage();
   await restartedPage.goto(`chrome-extension://${extensionId}/options.html`, { waitUntil: "domcontentloaded" });
@@ -302,9 +448,11 @@ try {
   await restartedPage.evaluate(() => chrome.runtime.sendMessage({ type: "CLEAR_API_KEYS" }));
   const remainingLocal = await restartedPage.evaluate(() => chrome.storage.local.get("savedSecrets"));
   if (Object.keys(remainingLocal.savedSecrets ?? {}).length !== 0) throw new Error(`Persisted secrets were not cleared: ${Object.keys(remainingLocal.savedSecrets ?? {}).join(", ")}`);
-  console.log(`Chrome loaded Jev 做题家（Jev SWOT） ${extensionId}; vision→direct answer/details, OCR→JEV or raw-model fallback, and streaming explanation flows are healthy (${Math.round(ocr.confidence * 100)}%, ${ocr.backend}).`);
+  console.log(`Chrome loaded Jev SWOT ${extensionId}; vision→direct answer/details, OCR→JEV or raw-model fallback, and streaming explanation flows are healthy (${Math.round(ocr.confidence * 100)}%, ${ocr.backend}).`);
 } finally {
   await browser?.close();
   if (server) { server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); }
+  if (frameServer) { frameServer.closeAllConnections(); await new Promise((resolve) => frameServer.close(resolve)); }
   await rm(userDataDir, { recursive: true, force: true });
+  await rm(smokeExtensionRoot, { recursive: true, force: true });
 }
